@@ -1,18 +1,18 @@
 --[[
     Script para Merge a Nuclear Bomb
-    Versao: 3.0
-    UI Moderna com sistema de arraste
+    Versao: 4.0 - CODIGOS FUNCIONAIS
 ]]
 
 -- =============================================
--- SISTEMA DE UI MODERNA
+-- VARIAVEIS GLOBAIS
 -- =============================================
 
-local Players = game:GetService("Players")
-local UserInputService = game:GetService("UserInputService")
-local TweenService = game:GetService("TweenService")
-local player = Players.LocalPlayer
-local mouse = player:GetMouse()
+local player = game:GetService("Players").LocalPlayer
+local gui = player.PlayerGui
+local workspace = game:GetService("Workspace")
+local runService = game:GetService("RunService")
+local userInput = game:GetService("UserInputService")
+local tween = game:GetService("TweenService")
 
 -- =============================================
 -- CONFIGURACOES
@@ -28,247 +28,416 @@ local config = {
     autoKill = false,
     antiBan = true,
     selectedCommander = 1,
-    mergeSpeed = 0.05,
+    mergeDelay = 0.05,
 }
 
 -- =============================================
--- ANTI-BAN
+-- FUNCOES DE CLICK UNIVERSAL
 -- =============================================
 
-local antiBan = {
-    history = {},
-    maxHistory = 30,
-}
-
-function antiBan:randomDelay()
-    if not config.antiBan then return 0 end
-    local patterns = {0.05, 0.08, 0.12, 0.15, 0.2, 0.25}
-    return patterns[math.random(#patterns)]
-end
-
-function antiBan:humanInterval()
-    if not config.antiBan then return 0.1 end
-    return math.random(5, 20) / 100
-end
-
-function antiBan:register(action)
-    if not config.antiBan then return end
-    table.insert(self.history, {action = action, time = tick()})
-    if #self.history > self.maxHistory then
-        table.remove(self.history, 1)
-    end
-end
-
--- =============================================
--- FUNCOES AUXILIARES
--- =============================================
-
-local function findButton(pattern)
-    local gui = player.PlayerGui
+local function findAndClick(pattern, multiple)
+    local clicked = false
+    local gui = player:WaitForChild("PlayerGui")
+    
+    -- Procura em todos os frames do jogo
     for _, v in pairs(gui:GetDescendants()) do
         if v:IsA("TextButton") and v.Visible and v.Active then
-            local name = v.Name:lower()
+            local name = (v.Name or ""):lower()
             local text = (v.Text or ""):lower()
+            
             if name:find(pattern) or text:find(pattern) then
-                return v
-            end
-        end
-    end
-    return nil
-end
-
-local function safeClick(button)
-    if not button or not button:IsA("TextButton") then return false end
-    if not button.Visible or not button.Active then return false end
-    
-    pcall(function()
-        button:Activate()
-    end)
-    
-    pcall(function()
-        if button.ClickDetector then
-            button.ClickDetector:FireClick()
-        end
-    end)
-    
-    antiBan:register("click_" .. button.Name)
-    return true
-end
-
--- =============================================
--- FUNCOES DE AUTOMACAO
--- =============================================
-
-local function performMerge()
-    if not config.autoMerge then return end
-    
-    local mergeBtn = findButton("merge")
-    if mergeBtn then
-        safeClick(mergeBtn)
-        task.wait(antiBan:humanInterval())
-        return
-    end
-    
-    for _, v in pairs(workspace:GetDescendants()) do
-        if v:IsA("Model") and v.Name:find("Nuke") then
-            local click = v:FindFirstChild("ClickDetector")
-            if click then
-                pcall(function() 
-                    click:FireClick() 
-                    task.wait(antiBan:humanInterval() / 2)
+                pcall(function()
+                    -- Tenta diferentes métodos de clique
+                    v:Activate()
+                    if v.ClickDetector then
+                        v.ClickDetector:FireClick()
+                    end
+                    -- FireServer para botões com servidor
+                    if v.FireServer then
+                        v:FireServer()
+                    end
+                    clicked = true
                 end)
+                if not multiple then break end
             end
         end
     end
-end
-
-local function performLock()
-    if not config.autoLocked then return end
-    local lockBtn = findButton("lock")
-    if lockBtn then
-        safeClick(lockBtn)
-        antiBan:register("lock")
-    end
-end
-
-local function performTier()
-    if not config.autoTier then return end
-    local tierBtn = findButton("tier") or findButton("spawn tier")
-    if tierBtn then
-        safeClick(tierBtn)
-        antiBan:register("tier")
-        task.wait(antiBan:randomDelay())
-    end
-end
-
-local function performSpawn()
-    if not config.autoSpawn then return end
-    local spawnBtn = findButton("spawn") or findButton("max spawn")
-    if spawnBtn then
-        safeClick(spawnBtn)
-        antiBan:register("spawn")
-        task.wait(antiBan:randomDelay())
-    end
-end
-
-local function performLockUpgrade()
-    if not config.autoLockUpgrade then return end
-    local lockUpBtn = findButton("lock base") or findButton("base lock")
-    if lockUpBtn then
-        safeClick(lockUpBtn)
-        antiBan:register("lock_upgrade")
-        task.wait(antiBan:randomDelay())
-    end
-end
-
-local function performRebirth()
-    if not config.autoRebirth then return end
-    local rebirthBtn = findButton("rebirth") or findButton("prestige")
-    if rebirthBtn then
-        safeClick(rebirthBtn)
-        antiBan:register("rebirth")
-        task.wait(antiBan:randomDelay() * 2)
-    end
-end
-
-local function performKill()
-    if not config.autoKill then return end
     
-    local targets = {}
-    
-    for _, v in pairs(workspace:GetDescendants()) do
-        if v:IsA("Model") then
-            local name = v.Name:lower()
-            if name:find("commander") or name:find("boss") or name:find("chef") then
-                local health = v:FindFirstChild("Health") or v:FindFirstChild("Humanoid")
-                if health and health.Value > 0 then
-                    table.insert(targets, v)
+    -- Procura em modelos no workspace
+    if not clicked then
+        for _, v in pairs(workspace:GetDescendants()) do
+            if v:IsA("Model") and v:FindFirstChild("ClickDetector") then
+                local name = (v.Name or ""):lower()
+                if name:find(pattern) then
+                    pcall(function()
+                        v.ClickDetector:FireClick()
+                        clicked = true
+                    end)
+                    if not multiple then break end
                 end
             end
         end
     end
     
-    for _, v in pairs(player.PlayerGui:GetDescendants()) do
+    return clicked
+end
+
+local function clickOnScreen(x, y)
+    -- Simula clique na tela em posição específica
+    local vim = game:GetService("VirtualInputManager")
+    vim:SendMouseButtonEvent(x, y, 0, true, game, 0)
+    task.wait(0.05)
+    vim:SendMouseButtonEvent(x, y, 0, false, game, 0)
+end
+
+-- =============================================
+-- FUNCAO PARA ENCONTRAR BOTOES PELA COR
+-- =============================================
+
+local function findButtonByColor(color, radius)
+    -- Procura botões por cor aproximada
+    local results = {}
+    local gui = player:WaitForChild("PlayerGui")
+    
+    for _, v in pairs(gui:GetDescendants()) do
         if v:IsA("TextButton") and v.Visible then
-            local text = (v.Text or ""):lower()
-            if text:find("commander") or text:find("boss") or text:find("attack") then
-                table.insert(targets, v)
+            local bg = v.BackgroundColor3
+            local diff = math.abs(bg.R - color.R) + math.abs(bg.G - color.G) + math.abs(bg.B - color.B)
+            if diff < (radius or 0.3) then
+                table.insert(results, v)
+            end
+        end
+    end
+    return results
+end
+
+-- =============================================
+-- AUTO MERGE (FAST)
+-- =============================================
+
+local function doAutoMerge()
+    if not config.autoMerge then return end
+    
+    -- Método 1: Clica no botão de merge da interface
+    local merged = findAndClick("merge")
+    
+    if not merged then
+        -- Método 2: Clica nas nukes diretamente no mundo
+        for _, v in pairs(workspace:GetDescendants()) do
+            if v:IsA("Model") and (v.Name:lower():find("nuke") or v.Name:lower():find("bomb")) then
+                local click = v:FindFirstChild("ClickDetector")
+                if click then
+                    pcall(function()
+                        click:FireClick()
+                        merged = true
+                    end)
+                end
             end
         end
     end
     
-    if #targets > 0 then
-        local target = targets[math.min(config.selectedCommander, #targets)]
-        if target:IsA("TextButton") then
-            safeClick(target)
-        elseif target:IsA("Model") then
-            local click = target:FindFirstChild("ClickDetector")
-            if click then
-                pcall(function()
-                    click:FireClick()
-                    antiBan:register("kill_commander")
-                end)
+    if not merged then
+        -- Método 3: Clica no centro da tela (onde geralmente fica o botão)
+        local viewport = game:GetService("GuiService"):GetGuiInset()
+        local centerX = viewport.X / 2
+        local centerY = viewport.Y / 2
+        clickOnScreen(centerX, centerY + 50)
+    end
+end
+
+-- =============================================
+-- AUTO LOCKED
+-- =============================================
+
+local function doAutoLocked()
+    if not config.autoLocked then return end
+    
+    -- Procura pelo botão de lock
+    local locked = findAndClick("lock")
+    
+    if not locked then
+        -- Tenta padrões alternativos
+        locked = findAndClick("shield")
+    end
+    
+    if not locked then
+        -- Procura botão por cor (amarelo/ouro)
+        local buttons = findButtonByColor(Color3.fromRGB(255, 170, 0), 0.5)
+        for _, btn in pairs(buttons) do
+            if btn.Visible and btn.Active then
+                pcall(function() btn:Activate() end)
+                locked = true
+                break
             end
         end
     end
 end
 
 -- =============================================
--- LOOP PRINCIPAL
+-- AUTO TIER UPGRADE
 -- =============================================
 
-local function mainLoop()
-    while task.wait() do
-        local startTime = tick()
-        
-        if config.autoMerge then
-            performMerge()
-            task.wait(antiBan:humanInterval() / 2)
-        end
-        
-        if config.autoLocked then
-            performLock()
-            task.wait(antiBan:humanInterval())
-        end
-        
-        if config.autoTier then
-            performTier()
-            task.wait(antiBan:humanInterval())
-        end
-        
-        if config.autoSpawn then
-            performSpawn()
-            task.wait(antiBan:humanInterval())
-        end
-        
-        if config.autoLockUpgrade then
-            performLockUpgrade()
-            task.wait(antiBan:humanInterval())
-        end
-        
-        if config.autoRebirth then
-            performRebirth()
-            task.wait(antiBan:humanInterval() * 1.5)
-        end
-        
-        if config.autoKill then
-            performKill()
-            task.wait(antiBan:humanInterval() * 2)
-        end
-        
-        local elapsed = tick() - startTime
-        if elapsed < 0.05 then
-            task.wait(0.05 - elapsed)
+local function doTierUpgrade()
+    if not config.autoTier then return end
+    
+    -- Procura botão de tier
+    local tiered = findAndClick("tier")
+    
+    if not tiered then
+        tiered = findAndClick("spawn tier")
+    end
+    
+    if not tiered then
+        tiered = findAndClick("upgrade tier")
+    end
+    
+    if not tiered then
+        -- Procura por botões com texto contendo "tier"
+        for _, v in pairs(player.PlayerGui:GetDescendants()) do
+            if v:IsA("TextButton") and v.Visible then
+                local text = (v.Text or ""):lower()
+                if text:find("tier") and text:find("upgrade") then
+                    pcall(function() v:Activate() end)
+                    tiered = true
+                    break
+                end
+            end
         end
     end
 end
 
 -- =============================================
--- UI MODERNA COM DRAG
+-- AUTO SPAWN UPGRADE
 -- =============================================
 
-local function createModernUI()
-    -- ScreenGui principal
+local function doSpawnUpgrade()
+    if not config.autoSpawn then return end
+    
+    local spawned = findAndClick("spawn")
+    
+    if not spawned then
+        spawned = findAndClick("max spawn")
+    end
+    
+    if not spawned then
+        spawned = findAndClick("spawn rate")
+    end
+    
+    if not spawned then
+        -- Procura por botões com texto contendo "spawn"
+        for _, v in pairs(player.PlayerGui:GetDescendants()) do
+            if v:IsA("TextButton") and v.Visible then
+                local text = (v.Text or ""):lower()
+                if text:find("spawn") and text:find("upgrade") then
+                    pcall(function() v:Activate() end)
+                    spawned = true
+                    break
+                end
+            end
+        end
+    end
+end
+
+-- =============================================
+-- AUTO LOCK UPGRADE
+-- =============================================
+
+local function doLockUpgrade()
+    if not config.autoLockUpgrade then return end
+    
+    local locked = findAndClick("lock base")
+    
+    if not locked then
+        locked = findAndClick("base lock")
+    end
+    
+    if not locked then
+        locked = findAndClick("lock upgrade")
+    end
+    
+    if not locked then
+        -- Procura por botões com texto contendo "lock"
+        for _, v in pairs(player.PlayerGui:GetDescendants()) do
+            if v:IsA("TextButton") and v.Visible then
+                local text = (v.Text or ""):lower()
+                if text:find("lock") and text:find("upgrade") then
+                    pcall(function() v:Activate() end)
+                    locked = true
+                    break
+                end
+            end
+        end
+    end
+end
+
+-- =============================================
+-- AUTO REBIRTH
+-- =============================================
+
+local function doRebirth()
+    if not config.autoRebirth then return end
+    
+    local rebirthed = findAndClick("rebirth")
+    
+    if not rebirthed then
+        rebirthed = findAndClick("prestige")
+    end
+    
+    if not rebirthed then
+        rebirthed = findAndClick("reset")
+    end
+    
+    if not rebirthed then
+        -- Procura botão de rebirth pela cor (vermelho/rosa)
+        local buttons = findButtonByColor(Color3.fromRGB(255, 50, 50), 0.5)
+        for _, btn in pairs(buttons) do
+            if btn.Visible and btn.Active then
+                local text = (btn.Text or ""):lower()
+                if text:find("rebirth") or text:find("prestige") then
+                    pcall(function() btn:Activate() end)
+                    rebirthed = true
+                    break
+                end
+            end
+        end
+    end
+end
+
+-- =============================================
+-- AUTO KILL COMMANDER
+-- =============================================
+
+local function doKillCommander()
+    if not config.autoKill then return end
+    
+    local killed = false
+    
+    -- Método 1: Procurar comandantes no workspace
+    local commanders = {}
+    for _, v in pairs(workspace:GetDescendants()) do
+        if v:IsA("Model") then
+            local name = (v.Name or ""):lower()
+            if name:find("commander") or name:find("boss") or name:find("chef") or name:find("enemy") then
+                local health = v:FindFirstChild("Health") or v:FindFirstChild("Humanoid")
+                if health and health.Value > 0 then
+                    table.insert(commanders, v)
+                end
+            end
+        end
+    end
+    
+    if #commanders > 0 then
+        local target = commanders[math.min(config.selectedCommander, #commanders)]
+        local click = target:FindFirstChild("ClickDetector")
+        if click then
+            pcall(function()
+                click:FireClick()
+                killed = true
+            end)
+        end
+    end
+    
+    -- Método 2: Procurar botão de ataque na UI
+    if not killed then
+        killed = findAndClick("attack")
+    end
+    
+    if not killed then
+        killed = findAndClick("commander")
+    end
+    
+    if not killed then
+        killed = findAndClick("boss")
+    end
+    
+    -- Método 3: Clique na posição do comandante na tela
+    if not killed then
+        local viewport = game:GetService("GuiService"):GetGuiInset()
+        local centerX = viewport.X / 2
+        local centerY = viewport.Y / 2
+        clickOnScreen(centerX, centerY - 100)
+    end
+end
+
+-- =============================================
+-- LOOP PRINCIPAL COM ANTI-BAN
+-- =============================================
+
+local lastActions = {}
+local function getRandomDelay()
+    if not config.antiBan then return 0.02 end
+    local delays = {0.05, 0.08, 0.12, 0.15, 0.2, 0.25, 0.3, 0.1, 0.18, 0.22}
+    return delays[math.random(#delays)]
+end
+
+local function getRandomPause()
+    if not config.antiBan then return 0.1 end
+    local pauses = {0.5, 0.8, 1.0, 1.2, 1.5, 0.3, 0.7, 1.1}
+    return pauses[math.random(#pauses)]
+end
+
+local function shouldRun()
+    if not config.antiBan then return true end
+    -- 95% de chance de executar (simula pausas humanas)
+    return math.random() < 0.95
+end
+
+local function mainLoop()
+    while task.wait(getRandomDelay()) do
+        if not shouldRun() then 
+            task.wait(getRandomPause())
+            continue 
+        end
+        
+        -- Auto Merge
+        if config.autoMerge then
+            doAutoMerge()
+            task.wait(getRandomDelay())
+        end
+        
+        -- Auto Locked
+        if config.autoLocked then
+            doAutoLocked()
+            task.wait(getRandomDelay())
+        end
+        
+        -- Auto Tier Upgrade
+        if config.autoTier then
+            doTierUpgrade()
+            task.wait(getRandomDelay())
+        end
+        
+        -- Auto Spawn Upgrade
+        if config.autoSpawn then
+            doSpawnUpgrade()
+            task.wait(getRandomDelay())
+        end
+        
+        -- Auto Lock Upgrade
+        if config.autoLockUpgrade then
+            doLockUpgrade()
+            task.wait(getRandomDelay())
+        end
+        
+        -- Auto Rebirth
+        if config.autoRebirth then
+            doRebirth()
+            task.wait(getRandomDelay() * 2)
+        end
+        
+        -- Auto Kill Commander
+        if config.autoKill then
+            doKillCommander()
+            task.wait(getRandomDelay() * 1.5)
+        end
+    end
+end
+
+-- =============================================
+-- UI MODERNA COMPLETA
+-- =============================================
+
+local function createUI()
     local screenGui = Instance.new("ScreenGui")
     screenGui.Name = "NukeUI"
     screenGui.Parent = player.PlayerGui
@@ -276,51 +445,46 @@ local function createModernUI()
     
     -- Frame principal
     local mainFrame = Instance.new("Frame")
-    mainFrame.Size = UDim2.new(0, 260, 0, 400)
-    mainFrame.Position = UDim2.new(0.05, 0, 0.1, 0)
-    mainFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 35)
-    mainFrame.BackgroundTransparency = 0.05
-    mainFrame.BorderSizePixel = 0
+    mainFrame.Size = UDim2.new(0, 280, 0, 450)
+    mainFrame.Position = UDim2.new(0.02, 0, 0.1, 0)
+    mainFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 30)
+    mainFrame.BackgroundTransparency = 0.08
+    mainFrame.BorderSizePixel = 1
+    mainFrame.BorderColor3 = Color3.fromRGB(50, 50, 70)
     mainFrame.ClipsDescendants = true
     mainFrame.Parent = screenGui
     
     -- Sombra
     local shadow = Instance.new("Frame")
-    shadow.Size = UDim2.new(1, 10, 1, 10)
-    shadow.Position = UDim2.new(0, -5, 0, -5)
+    shadow.Size = UDim2.new(1, 8, 1, 8)
+    shadow.Position = UDim2.new(0, -4, 0, -4)
     shadow.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-    shadow.BackgroundTransparency = 0.5
+    shadow.BackgroundTransparency = 0.4
     shadow.BorderSizePixel = 0
+    shadow.ZIndex = 0
     shadow.Parent = mainFrame
-    
-    -- Borda gradiente
-    local border = Instance.new("Frame")
-    border.Size = UDim2.new(1, 0, 1, 0)
-    border.BackgroundColor3 = Color3.fromRGB(40, 40, 55)
-    border.BorderSizePixel = 0
-    border.Parent = mainFrame
     
     -- Header
     local header = Instance.new("Frame")
-    header.Size = UDim2.new(1, 0, 0, 45)
-    header.BackgroundColor3 = Color3.fromRGB(35, 35, 50)
+    header.Size = UDim2.new(1, 0, 0, 50)
+    header.BackgroundColor3 = Color3.fromRGB(30, 30, 45)
     header.BorderSizePixel = 0
     header.Parent = mainFrame
     
-    -- Linha de destaque no header
-    local accentLine = Instance.new("Frame")
-    accentLine.Size = UDim2.new(1, 0, 0, 2)
-    accentLine.Position = UDim2.new(0, 0, 1, -2)
-    accentLine.BackgroundColor3 = Color3.fromRGB(255, 170, 0)
-    accentLine.BorderSizePixel = 0
-    accentLine.Parent = header
+    -- Linha de destaque
+    local accent = Instance.new("Frame")
+    accent.Size = UDim2.new(1, 0, 0, 2)
+    accent.Position = UDim2.new(0, 0, 1, -2)
+    accent.BackgroundColor3 = Color3.fromRGB(255, 170, 0)
+    accent.BorderSizePixel = 0
+    accent.Parent = header
     
     -- Titulo
     local title = Instance.new("TextLabel")
     title.Size = UDim2.new(0.7, 0, 1, 0)
     title.Position = UDim2.new(0, 15, 0, 0)
     title.BackgroundTransparency = 1
-    title.Text = "NUKE CONTROL"
+    title.Text = "NUKE CONTROL v4"
     title.TextColor3 = Color3.fromRGB(255, 255, 255)
     title.TextSize = 16
     title.TextXAlignment = Enum.TextXAlignment.Left
@@ -328,26 +492,26 @@ local function createModernUI()
     title.Parent = header
     
     -- Subtitulo
-    local subtitle = Instance.new("TextLabel")
-    subtitle.Size = UDim2.new(0.7, 0, 1, 0)
-    subtitle.Position = UDim2.new(0, 15, 0, 20)
-    subtitle.BackgroundTransparency = 1
-    subtitle.Text = "Merge a Nuclear Bomb"
-    subtitle.TextColor3 = Color3.fromRGB(150, 150, 180)
-    subtitle.TextSize = 10
-    subtitle.TextXAlignment = Enum.TextXAlignment.Left
-    subtitle.Font = Enum.Font.Gotham
-    subtitle.Parent = header
+    local sub = Instance.new("TextLabel")
+    sub.Size = UDim2.new(0.7, 0, 1, 0)
+    sub.Position = UDim2.new(0, 15, 0, 22)
+    sub.BackgroundTransparency = 1
+    sub.Text = "Merge a Nuclear Bomb"
+    sub.TextColor3 = Color3.fromRGB(150, 150, 180)
+    sub.TextSize = 10
+    sub.TextXAlignment = Enum.TextXAlignment.Left
+    sub.Font = Enum.Font.Gotham
+    sub.Parent = header
     
-    -- Botao de fechar
+    -- Botão fechar
     local closeBtn = Instance.new("TextButton")
     closeBtn.Size = UDim2.new(0, 30, 0, 30)
-    closeBtn.Position = UDim2.new(1, -35, 0, 8)
+    closeBtn.Position = UDim2.new(1, -38, 0, 10)
     closeBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 70)
     closeBtn.BackgroundTransparency = 0.5
-    closeBtn.Text = "X"
+    closeBtn.Text = "✕"
     closeBtn.TextColor3 = Color3.fromRGB(200, 200, 200)
-    closeBtn.TextSize = 14
+    closeBtn.TextSize = 18
     closeBtn.Font = Enum.Font.GothamBold
     closeBtn.BorderSizePixel = 0
     closeBtn.Parent = header
@@ -357,7 +521,7 @@ local function createModernUI()
     end)
     
     closeBtn.MouseEnter:Connect(function()
-        closeBtn.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+        closeBtn.BackgroundColor3 = Color3.fromRGB(200, 40, 40)
         closeBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
     end)
     
@@ -366,24 +530,24 @@ local function createModernUI()
         closeBtn.TextColor3 = Color3.fromRGB(200, 200, 200)
     end)
     
-    -- Area de conteudo (scrollable)
+    -- Conteúdo
     local content = Instance.new("ScrollingFrame")
-    content.Size = UDim2.new(1, 0, 1, -45)
-    content.Position = UDim2.new(0, 0, 0, 45)
+    content.Size = UDim2.new(1, 0, 1, -50)
+    content.Position = UDim2.new(0, 0, 0, 50)
     content.BackgroundTransparency = 1
     content.BorderSizePixel = 0
-    content.ScrollBarThickness = 4
+    content.ScrollBarThickness = 3
     content.ScrollBarImageColor3 = Color3.fromRGB(60, 60, 80)
-    content.CanvasSize = UDim2.new(0, 0, 0, 420)
+    content.CanvasSize = UDim2.new(0, 0, 0, 500)
     content.Parent = mainFrame
     
-    -- Funcao para criar toggles modernos
+    -- Função para criar toggle
     local function createToggle(text, configKey, yPos)
-        local toggleFrame = Instance.new("Frame")
-        toggleFrame.Size = UDim2.new(1, -20, 0, 40)
-        toggleFrame.Position = UDim2.new(0, 10, 0, yPos)
-        toggleFrame.BackgroundTransparency = 1
-        toggleFrame.Parent = content
+        local frame = Instance.new("Frame")
+        frame.Size = UDim2.new(1, -20, 0, 42)
+        frame.Position = UDim2.new(0, 10, 0, yPos)
+        frame.BackgroundTransparency = 1
+        frame.Parent = content
         
         -- Label
         local label = Instance.new("TextLabel")
@@ -391,226 +555,202 @@ local function createModernUI()
         label.Position = UDim2.new(0, 5, 0, 0)
         label.BackgroundTransparency = 1
         label.Text = text
-        label.TextColor3 = Color3.fromRGB(200, 200, 220)
+        label.TextColor3 = Color3.fromRGB(210, 210, 230)
         label.TextSize = 13
         label.TextXAlignment = Enum.TextXAlignment.Left
         label.Font = Enum.Font.Gotham
-        label.Parent = toggleFrame
+        label.Parent = frame
         
         -- Switch background
         local switchBg = Instance.new("Frame")
-        switchBg.Size = UDim2.new(0, 50, 0, 26)
-        switchBg.Position = UDim2.new(1, -55, 0.5, -13)
+        switchBg.Size = UDim2.new(0, 46, 0, 24)
+        switchBg.Position = UDim2.new(1, -52, 0.5, -12)
         switchBg.BackgroundColor3 = Color3.fromRGB(60, 60, 80)
         switchBg.BorderSizePixel = 0
-        switchBg.BackgroundTransparency = 0.3
-        switchBg.Parent = toggleFrame
+        switchBg.Parent = frame
         
         -- Switch circle
         local switchCircle = Instance.new("Frame")
-        switchCircle.Size = UDim2.new(0, 20, 0, 20)
+        switchCircle.Size = UDim2.new(0, 18, 0, 18)
         switchCircle.Position = UDim2.new(0, 3, 0, 3)
         switchCircle.BackgroundColor3 = Color3.fromRGB(150, 150, 170)
         switchCircle.BorderSizePixel = 0
         switchCircle.Parent = switchBg
         
-        -- Arredondar
-        switchBg.ClipsDescendants = true
-        switchCircle.ClipsDescendants = true
-        
+        -- Cantos arredondados
         local corner1 = Instance.new("UICorner")
-        corner1.CornerRadius = UDim.new(0, 13)
+        corner1.CornerRadius = UDim.new(0, 12)
         corner1.Parent = switchBg
         
         local corner2 = Instance.new("UICorner")
-        corner2.CornerRadius = UDim.new(0, 10)
+        corner2.CornerRadius = UDim.new(0, 9)
         corner2.Parent = switchCircle
         
         -- Click detector
-        local clickDetector = Instance.new("TextButton")
-        clickDetector.Size = UDim2.new(1, 0, 1, 0)
-        clickDetector.BackgroundTransparency = 1
-        clickDetector.Text = ""
-        clickDetector.Parent = switchBg
+        local click = Instance.new("TextButton")
+        click.Size = UDim2.new(1, 0, 1, 0)
+        click.BackgroundTransparency = 1
+        click.Text = ""
+        click.Parent = switchBg
         
-        local isOn = false
+        local state = false
         
-        local function updateSwitch(state)
-            isOn = state
-            config[configKey] = state
+        local function updateSwitch(newState)
+            state = newState
+            config[configKey] = newState
             
-            local targetBg = state and Color3.fromRGB(255, 170, 0) or Color3.fromRGB(60, 60, 80)
-            local targetCircle = state and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(150, 150, 170)
-            local targetPos = state and UDim2.new(1, -23, 0, 3) or UDim2.new(0, 3, 0, 3)
+            local bgColor = newState and Color3.fromRGB(255, 170, 0) or Color3.fromRGB(60, 60, 80)
+            local circleColor = newState and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(150, 150, 170)
+            local circlePos = newState and UDim2.new(1, -21, 0, 3) or UDim2.new(0, 3, 0, 3)
             
-            TweenService:Create(switchBg, TweenInfo.new(0.3, Enum.EasingStyle.Quad), {
-                BackgroundColor3 = targetBg
-            }):Play()
-            
-            TweenService:Create(switchCircle, TweenInfo.new(0.3, Enum.EasingStyle.Quad), {
-                BackgroundColor3 = targetCircle,
-                Position = targetPos
+            tween:Create(switchBg, TweenInfo.new(0.3), {BackgroundColor3 = bgColor}):Play()
+            tween:Create(switchCircle, TweenInfo.new(0.3), {
+                BackgroundColor3 = circleColor,
+                Position = circlePos
             }):Play()
         end
         
-        clickDetector.MouseButton1Click:Connect(function()
-            updateSwitch(not isOn)
+        click.MouseButton1Click:Connect(function()
+            updateSwitch(not state)
         end)
         
         return updateSwitch
     end
     
-    -- Criar toggles
+    -- Lista de toggles
     local toggles = {
         {"Auto Merge", "autoMerge", 5},
-        {"Auto Locked", "autoLocked", 50},
-        {"Tier Upgrade", "autoTier", 95},
-        {"Spawn Upgrade", "autoSpawn", 140},
-        {"Lock Upgrade", "autoLockUpgrade", 185},
-        {"Auto Rebirth", "autoRebirth", 230},
-        {"Auto Kill Commander", "autoKill", 275},
-        {"Anti-Ban System", "antiBan", 320},
+        {"Auto Locked", "autoLocked", 52},
+        {"Tier Upgrade", "autoTier", 99},
+        {"Spawn Upgrade", "autoSpawn", 146},
+        {"Lock Upgrade", "autoLockUpgrade", 193},
+        {"Auto Rebirth", "autoRebirth", 240},
+        {"Auto Kill Commander", "autoKill", 287},
+        {"Anti-Ban System", "antiBan", 334},
     }
     
-    local toggleFunctions = {}
-    
-    for _, toggleData in ipairs(toggles) do
-        local update = createToggle(toggleData[1], toggleData[2], toggleData[3])
-        table.insert(toggleFunctions, update)
+    for _, data in ipairs(toggles) do
+        createToggle(data[1], data[2], data[3])
     end
     
     -- Seletor de comandante
-    local commanderFrame = Instance.new("Frame")
-    commanderFrame.Size = UDim2.new(1, -20, 0, 40)
-    commanderFrame.Position = UDim2.new(0, 10, 0, 365)
-    commanderFrame.BackgroundTransparency = 1
-    commanderFrame.Parent = content
+    local cmdFrame = Instance.new("Frame")
+    cmdFrame.Size = UDim2.new(1, -20, 0, 42)
+    cmdFrame.Position = UDim2.new(0, 10, 0, 381)
+    cmdFrame.BackgroundTransparency = 1
+    cmdFrame.Parent = content
     
-    local commanderLabel = Instance.new("TextLabel")
-    commanderLabel.Size = UDim2.new(0.5, 0, 1, 0)
-    commanderLabel.Position = UDim2.new(0, 5, 0, 0)
-    commanderLabel.BackgroundTransparency = 1
-    commanderLabel.Text = "Commander Target"
-    commanderLabel.TextColor3 = Color3.fromRGB(200, 200, 220)
-    commanderLabel.TextSize = 13
-    commanderLabel.TextXAlignment = Enum.TextXAlignment.Left
-    commanderLabel.Font = Enum.Font.Gotham
-    commanderLabel.Parent = commanderFrame
+    local cmdLabel = Instance.new("TextLabel")
+    cmdLabel.Size = UDim2.new(0.5, 0, 1, 0)
+    cmdLabel.Position = UDim2.new(0, 5, 0, 0)
+    cmdLabel.BackgroundTransparency = 1
+    cmdLabel.Text = "Commander Target"
+    cmdLabel.TextColor3 = Color3.fromRGB(210, 210, 230)
+    cmdLabel.TextSize = 13
+    cmdLabel.TextXAlignment = Enum.TextXAlignment.Left
+    cmdLabel.Font = Enum.Font.Gotham
+    cmdLabel.Parent = cmdFrame
     
-    local commanderValue = Instance.new("TextLabel")
-    commanderValue.Size = UDim2.new(0.3, 0, 1, 0)
-    commanderValue.Position = UDim2.new(0.7, 0, 0, 0)
-    commanderValue.BackgroundTransparency = 1
-    commanderValue.Text = tostring(config.selectedCommander)
-    commanderValue.TextColor3 = Color3.fromRGB(255, 170, 0)
-    commanderValue.TextSize = 16
-    commanderValue.TextXAlignment = Enum.TextXAlignment.Right
-    commanderValue.Font = Enum.Font.GothamBold
-    commanderValue.Parent = commanderFrame
+    local cmdValue = Instance.new("TextLabel")
+    cmdValue.Size = UDim2.new(0.2, 0, 1, 0)
+    cmdValue.Position = UDim2.new(0.8, -30, 0, 0)
+    cmdValue.BackgroundTransparency = 1
+    cmdValue.Text = "1"
+    cmdValue.TextColor3 = Color3.fromRGB(255, 170, 0)
+    cmdValue.TextSize = 18
+    cmdValue.TextXAlignment = Enum.TextXAlignment.Center
+    cmdValue.Font = Enum.Font.GothamBold
+    cmdValue.Parent = cmdFrame
     
-    local commLeft = Instance.new("TextButton")
-    commLeft.Size = UDim2.new(0, 25, 0, 25)
-    commLeft.Position = UDim2.new(0.55, 0, 0.5, -12.5)
-    commLeft.BackgroundColor3 = Color3.fromRGB(40, 40, 60)
-    commLeft.Text = "<"
-    commLeft.TextColor3 = Color3.fromRGB(200, 200, 200)
-    commLeft.TextSize = 16
-    commLeft.Font = Enum.Font.GothamBold
-    commLeft.BorderSizePixel = 0
-    commLeft.Parent = commanderFrame
+    local btnLeft = Instance.new("TextButton")
+    btnLeft.Size = UDim2.new(0, 28, 0, 28)
+    btnLeft.Position = UDim2.new(0.7, 0, 0.5, -14)
+    btnLeft.BackgroundColor3 = Color3.fromRGB(40, 40, 60)
+    btnLeft.Text = "◀"
+    btnLeft.TextColor3 = Color3.fromRGB(200, 200, 200)
+    btnLeft.TextSize = 14
+    btnLeft.Font = Enum.Font.GothamBold
+    btnLeft.BorderSizePixel = 0
+    btnLeft.Parent = cmdFrame
     
-    local commRight = Instance.new("TextButton")
-    commRight.Size = UDim2.new(0, 25, 0, 25)
-    commRight.Position = UDim2.new(0.95, -25, 0.5, -12.5)
-    commRight.BackgroundColor3 = Color3.fromRGB(40, 40, 60)
-    commRight.Text = ">"
-    commRight.TextColor3 = Color3.fromRGB(200, 200, 200)
-    commRight.TextSize = 16
-    commRight.Font = Enum.Font.GothamBold
-    commRight.BorderSizePixel = 0
-    commRight.Parent = commanderFrame
+    local btnRight = Instance.new("TextButton")
+    btnRight.Size = UDim2.new(0, 28, 0, 28)
+    btnRight.Position = UDim2.new(0.95, -28, 0.5, -14)
+    btnRight.BackgroundColor3 = Color3.fromRGB(40, 40, 60)
+    btnRight.Text = "▶"
+    btnRight.TextColor3 = Color3.fromRGB(200, 200, 200)
+    btnRight.TextSize = 14
+    btnRight.Font = Enum.Font.GothamBold
+    btnRight.BorderSizePixel = 0
+    btnRight.Parent = cmdFrame
     
-    commLeft.MouseButton1Click:Connect(function()
+    btnLeft.MouseButton1Click:Connect(function()
         config.selectedCommander = math.max(1, config.selectedCommander - 1)
-        commanderValue.Text = tostring(config.selectedCommander)
+        cmdValue.Text = tostring(config.selectedCommander)
     end)
     
-    commRight.MouseButton1Click:Connect(function()
+    btnRight.MouseButton1Click:Connect(function()
         config.selectedCommander = math.min(5, config.selectedCommander + 1)
-        commanderValue.Text = tostring(config.selectedCommander)
+        cmdValue.Text = tostring(config.selectedCommander)
     end)
     
     -- Status bar
     local statusBar = Instance.new("Frame")
-    statusBar.Size = UDim2.new(1, 0, 0, 25)
-    statusBar.Position = UDim2.new(0, 0, 1, -25)
-    statusBar.BackgroundColor3 = Color3.fromRGB(20, 20, 30)
+    statusBar.Size = UDim2.new(1, 0, 0, 22)
+    statusBar.Position = UDim2.new(0, 0, 1, -22)
+    statusBar.BackgroundColor3 = Color3.fromRGB(15, 15, 25)
     statusBar.BorderSizePixel = 0
     statusBar.Parent = mainFrame
     
     local statusText = Instance.new("TextLabel")
     statusText.Size = UDim2.new(1, 0, 1, 0)
     statusText.BackgroundTransparency = 1
-    statusText.Text = "Ready"
+    statusText.Text = "System Ready"
     statusText.TextColor3 = Color3.fromRGB(100, 255, 100)
     statusText.TextSize = 10
     statusText.Font = Enum.Font.Gotham
     statusText.Parent = statusBar
     
-    -- Atualiza status
+    -- Atualizar status
     task.spawn(function()
         while screenGui.Parent do
-            local activeCount = 0
-            for key, value in pairs(config) do
-                if type(value) == "boolean" and value and key ~= "antiBan" then
-                    activeCount = activeCount + 1
-                end
+            local active = 0
+            local modules = {"autoMerge", "autoLocked", "autoTier", "autoSpawn", "autoLockUpgrade", "autoRebirth", "autoKill"}
+            for _, mod in pairs(modules) do
+                if config[mod] then active = active + 1 end
             end
-            statusText.Text = activeCount > 0 and ("Active: " .. activeCount .. " modules | Anti-Ban: " .. (config.antiBan and "ON" or "OFF")) or "Idle"
-            task.wait(1)
+            statusText.Text = active > 0 and ("▶ " .. active .. " active | Anti-Ban: " .. (config.antiBan and "ON" or "OFF")) or "⏸ Idle"
+            task.wait(0.5)
         end
     end)
     
-    -- =============================================
-    -- SISTEMA DE DRAG
-    -- =============================================
-    
-    local dragging = false
+    -- Sistema de drag
+    local drag = false
     local dragInput, dragStart, startPos
     
-    local function updatePosition(input)
-        local delta = input.Position - dragStart
-        mainFrame.Position = UDim2.new(
-            startPos.X.Scale,
-            startPos.X.Offset + delta.X,
-            startPos.Y.Scale,
-            startPos.Y.Offset + delta.Y
-        )
-    end
-    
     header.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-            dragging = true
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            drag = true
             dragStart = input.Position
             startPos = mainFrame.Position
-            
-            input.Changed:Connect(function()
-                if input.UserInputState == Enum.UserInputState.End then
-                    dragging = false
-                end
-            end)
         end
     end)
     
-    header.InputChanged:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
-            dragInput = input
+    header.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            drag = false
         end
     end)
     
-    UserInputService.InputChanged:Connect(function(input)
-        if input == dragInput and dragging then
-            updatePosition(input)
+    userInput.InputChanged:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseMovement and drag then
+            local delta = input.Position - dragStart
+            mainFrame.Position = UDim2.new(
+                startPos.X.Scale,
+                startPos.X.Offset + delta.X,
+                startPos.Y.Scale,
+                startPos.Y.Offset + delta.Y
+            )
         end
     end)
     
@@ -621,18 +761,30 @@ end
 -- INICIALIZACAO
 -- =============================================
 
-print("Nuke Control v3.0 carregado com sucesso!")
-print("UI moderna com sistema de arraste")
+print("═══════════════════════════════════════════")
+print("  NUKE CONTROL v4.0 - CODIGOS FUNCIONAIS")
+print("  Merge a Nuclear Bomb Script")
+print("═══════════════════════════════════════════")
+print("  Modulos ativos:")
+print("  • Auto Merge (Fast) - Clique em merge")
+print("  • Auto Locked - Clique em lock")
+print("  • Tier Upgrade - Clique em tier")
+print("  • Spawn Upgrade - Clique em spawn")
+print("  • Lock Upgrade - Clique em lock base")
+print("  • Auto Rebirth - Clique em rebirth")
+print("  • Auto Kill Commander - Clique no comandante")
+print("  • Anti-Ban System - Delays aleatorios")
+print("═══════════════════════════════════════════")
 
 -- Criar UI
-local ui = createModernUI()
+local ui = createUI()
 
--- Iniciar loop principal
+-- Iniciar loop
 task.spawn(mainLoop)
 
--- Manter UI caso seja destruida
+-- Manter UI
 while task.wait(5) do
     if not player.PlayerGui:FindFirstChild("NukeUI") then
-        ui = createModernUI()
+        ui = createUI()
     end
 end
