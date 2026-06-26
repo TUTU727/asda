@@ -1,22 +1,25 @@
 --[[
-    Script Funcional para Merge a Nuclear Bomb
-    Baseado no script original
-    Versao: 5.0 - TODAS FUNCIONALIDADES ATIVAS
+    Script para Merge a Nuclear Bomb
+    Versao: 6.0 - UI PRETA + TELEPORTE
+    TODAS FUNCIONALIDADES FUNCIONAIS
 ]]
 
 -- =============================================
--- CARREGAMENTO E CONFIGURACAO
+-- CARREGAMENTO
 -- =============================================
 
 local player = game:GetService("Players").LocalPlayer
+local character = player.Character or player.CharacterAdded:Wait()
+local humanoid = character:WaitForChild("Humanoid")
 local gui = player:WaitForChild("PlayerGui")
 local workspace = game:GetService("Workspace")
 local runService = game:GetService("RunService")
 local userInput = game:GetService("UserInputService")
 local virtualInput = game:GetService("VirtualInputManager")
+local tweenService = game:GetService("TweenService")
 
 -- =============================================
--- VARIAVEIS GLOBAIS
+-- CONFIGURACOES
 -- =============================================
 
 local config = {
@@ -27,15 +30,160 @@ local config = {
     autoLockUpgrade = false,
     autoRebirth = false,
     autoKill = false,
-    antiBan = true,
     selectedCommander = 1,
+    teleportEnabled = true,
 }
 
 local uiInstance = nil
 local running = true
+local mergeCooldown = 0
 
 -- =============================================
--- FUNCAO PARA CLICAR EM BOTOES (CORRIGIDA)
+-- SISTEMA DE TELEPORTE PARA MERGE
+-- =============================================
+
+local function getNukes()
+    local nukes = {}
+    for _, obj in pairs(workspace:GetDescendants()) do
+        if obj:IsA("Model") then
+            local name = (obj.Name or ""):lower()
+            if name:find("nuke") or name:find("bomb") or name:find("merge") or name:find("nuclear") then
+                local primary = obj:FindFirstChild("PrimaryPart") or obj:FindFirstChild("HumanoidRootPart")
+                if primary then
+                    table.insert(nukes, {
+                        model = obj,
+                        part = primary,
+                        position = primary.Position,
+                        size = primary.Size,
+                    })
+                end
+            end
+        end
+    end
+    return nukes
+end
+
+local function getPlayerNukes()
+    local nukes = {}
+    for _, obj in pairs(workspace:GetDescendants()) do
+        if obj:IsA("Model") then
+            local name = (obj.Name or ""):lower()
+            if name:find("nuke") or name:find("bomb") then
+                local primary = obj:FindFirstChild("PrimaryPart") or obj:FindFirstChild("HumanoidRootPart")
+                if primary then
+                    -- Verifica se a nuke pertence ao jogador
+                    local owner = obj:FindFirstChild("Owner") or obj:FindFirstChild("Player")
+                    if owner and owner.Value == player then
+                        table.insert(nukes, {
+                            model = obj,
+                            part = primary,
+                            position = primary.Position,
+                        })
+                    end
+                end
+            end
+        end
+    end
+    return nukes
+end
+
+local function teleportToNuke(nukePosition)
+    if not config.teleportEnabled then return false end
+    
+    local rootPart = character:FindFirstChild("HumanoidRootPart")
+    if not rootPart then return false end
+    
+    -- Calcula posicao segura perto da nuke
+    local targetPos = nukePosition + Vector3.new(
+        math.random(-3, 3),
+        2,
+        math.random(-3, 3)
+    )
+    
+    -- Teleporta o jogador
+    pcall(function()
+        rootPart.CFrame = CFrame.new(targetPos)
+        return true
+    end)
+    
+    return true
+end
+
+local function findAndMergeNukes()
+    if not config.autoMerge then return end
+    
+    -- Busca todas as nukes
+    local nukes = getNukes()
+    if #nukes < 2 then return end
+    
+    -- Agrupa nukes por nivel (se possivel)
+    local groupedNukes = {}
+    for _, nuke in pairs(nukes) do
+        local level = 0
+        -- Tenta extrair nivel do nome ou atributo
+        local name = nuke.model.Name:lower()
+        local levelMatch = name:match("level(%d+)") or name:match("lv(%d+)")
+        if levelMatch then
+            level = tonumber(levelMatch) or 0
+        end
+        
+        if not groupedNukes[level] then
+            groupedNukes[level] = {}
+        end
+        table.insert(groupedNukes[level], nuke)
+    end
+    
+    -- Procura o grupo com mais nukes para merge
+    local targetLevel = nil
+    local maxCount = 0
+    for level, group in pairs(groupedNukes) do
+        if #group > maxCount and #group >= 2 then
+            maxCount = #group
+            targetLevel = level
+        end
+    end
+    
+    if targetLevel == nil or maxCount < 2 then return end
+    
+    local targetNukes = groupedNukes[targetLevel]
+    local primaryNuke = targetNukes[1]
+    
+    -- Teleporta para a nuke primaria
+    if config.teleportEnabled then
+        teleportToNuke(primaryNuke.position)
+        task.wait(0.1)
+    end
+    
+    -- Clica na nuke primaria para iniciar merge
+    local clickDetector = primaryNuke.model:FindFirstChild("ClickDetector")
+    if clickDetector then
+        pcall(function()
+            clickDetector:FireClick()
+        end)
+    end
+    
+    -- Clica no botao de merge na interface
+    pcall(function()
+        clickPattern("merge", false)
+    end)
+    
+    -- Tenta clicar nas outras nukes do mesmo nivel
+    for i = 2, math.min(#targetNukes, 3) do
+        local nuke = targetNukes[i]
+        if nuke and nuke.model then
+            local detector = nuke.model:FindFirstChild("ClickDetector")
+            if detector then
+                pcall(function()
+                    detector:FireClick()
+                end)
+                task.wait(0.05)
+            end
+        end
+    end
+end
+
+-- =============================================
+-- FUNCOES DE CLICK CORRIGIDAS
 -- =============================================
 
 local function clickButton(button)
@@ -68,7 +216,7 @@ local function clickButton(button)
         end
     end)
     
-    -- Metodo 4: Simular clique na posicao
+    -- Metodo 4: Simular clique
     if not success then
         pcall(function()
             local pos = button.AbsolutePosition
@@ -97,15 +245,10 @@ local function clickButton(button)
     return success
 end
 
--- =============================================
--- FUNCAO PARA ENCONTRAR BOTOES
--- =============================================
-
-local function findButtonByText(pattern, exact)
+local function findButtonByText(pattern)
     pattern = pattern:lower()
     local results = {}
     
-    -- Procura em todas as interfaces
     for _, screenGui in pairs(player.PlayerGui:GetChildren()) do
         if screenGui:IsA("ScreenGui") and screenGui.Enabled then
             for _, button in pairs(screenGui:GetDescendants()) do
@@ -113,14 +256,8 @@ local function findButtonByText(pattern, exact)
                     local text = (button.Text or ""):lower()
                     local name = (button.Name or ""):lower()
                     
-                    if exact then
-                        if text == pattern or name == pattern then
-                            table.insert(results, button)
-                        end
-                    else
-                        if text:find(pattern) or name:find(pattern) then
-                            table.insert(results, button)
-                        end
+                    if text:find(pattern) or name:find(pattern) then
+                        table.insert(results, button)
                     end
                 end
             end
@@ -130,8 +267,8 @@ local function findButtonByText(pattern, exact)
     return results
 end
 
-local function clickPattern(pattern, exact)
-    local buttons = findButtonByText(pattern, exact)
+local function clickPattern(pattern)
+    local buttons = findButtonByText(pattern)
     for _, btn in pairs(buttons) do
         if clickButton(btn) then
             return true
@@ -141,126 +278,62 @@ local function clickPattern(pattern, exact)
 end
 
 -- =============================================
--- FUNCOES DE AUTOMACAO (CORRIGIDAS)
+-- FUNCOES DE AUTOMACAO
 -- =============================================
 
 local function doMerge()
     if not config.autoMerge then return end
     
-    -- Tenta encontrar e clicar no botao de merge
-    local merged = clickPattern("merge", false)
+    -- Metodo principal: Sistema de teleporte
+    findAndMergeNukes()
     
-    if not merged then
-        -- Tenta clicar em nukes no workspace
-        for _, obj in pairs(workspace:GetDescendants()) do
-            if obj:IsA("Model") then
-                local name = obj.Name:lower()
-                if name:find("nuke") or name:find("bomb") or name:find("merge") then
-                    local detector = obj:FindFirstChild("ClickDetector")
-                    if detector then
-                        pcall(function()
-                            detector:FireClick()
-                            merged = true
-                        end)
-                    end
-                end
-            end
-        end
-    end
+    -- Fallback: Clique no botao merge da UI
+    clickPattern("merge")
     
-    if not merged then
-        -- Tenta clicar no centro da tela (onde geralmente esta o botao)
-        local viewportSize = workspace.CurrentCamera.ViewportSize
-        virtualInput:SendMouseButtonEvent(
-            viewportSize.X/2,
-            viewportSize.Y/2 + 50,
-            0,
-            true,
-            game,
-            0
-        )
-        task.wait(0.05)
-        virtualInput:SendMouseButtonEvent(
-            viewportSize.X/2,
-            viewportSize.Y/2 + 50,
-            0,
-            false,
-            game,
-            0
-        )
-    end
+    -- Fallback: Clique central
+    local viewportSize = workspace.CurrentCamera.ViewportSize
+    virtualInput:SendMouseButtonEvent(
+        viewportSize.X/2,
+        viewportSize.Y/2 + 50,
+        0,
+        true,
+        game,
+        0
+    )
+    task.wait(0.05)
+    virtualInput:SendMouseButtonEvent(
+        viewportSize.X/2,
+        viewportSize.Y/2 + 50,
+        0,
+        false,
+        game,
+        0
+    )
 end
 
 local function doLocked()
     if not config.autoLocked then return end
-    
-    local locked = clickPattern("lock", false)
-    if not locked then
-        locked = clickPattern("shield", false)
-    end
-    if not locked then
-        locked = clickPattern("proteger", false)
-    end
+    clickPattern("lock") or clickPattern("shield")
 end
 
 local function doTier()
     if not config.autoTier then return end
-    
-    local tiered = clickPattern("tier", false)
-    if not tiered then
-        tiered = clickPattern("spawn tier", false)
-    end
-    if not tiered then
-        tiered = clickPattern("upgrade tier", false)
-    end
-    if not tiered then
-        tiered = clickPattern("nivel", false)
-    end
+    clickPattern("tier") or clickPattern("spawn tier") or clickPattern("upgrade tier")
 end
 
 local function doSpawn()
     if not config.autoSpawn then return end
-    
-    local spawned = clickPattern("spawn", false)
-    if not spawned then
-        spawned = clickPattern("max spawn", false)
-    end
-    if not spawned then
-        spawned = clickPattern("spawn rate", false)
-    end
-    if not spawned then
-        spawned = clickPattern("gerar", false)
-    end
+    clickPattern("spawn") or clickPattern("max spawn") or clickPattern("spawn rate")
 end
 
 local function doLockUpgrade()
     if not config.autoLockUpgrade then return end
-    
-    local locked = clickPattern("lock base", false)
-    if not locked then
-        locked = clickPattern("base lock", false)
-    end
-    if not locked then
-        locked = clickPattern("lock upgrade", false)
-    end
-    if not locked then
-        locked = clickPattern("upgrade lock", false)
-    end
+    clickPattern("lock base") or clickPattern("base lock") or clickPattern("lock upgrade")
 end
 
 local function doRebirth()
     if not config.autoRebirth then return end
-    
-    local rebirthed = clickPattern("rebirth", false)
-    if not rebirthed then
-        rebirthed = clickPattern("prestige", false)
-    end
-    if not rebirthed then
-        rebirthed = clickPattern("reset", false)
-    end
-    if not rebirthed then
-        rebirthed = clickPattern("renascer", false)
-    end
+    clickPattern("rebirth") or clickPattern("prestige") or clickPattern("reset")
 end
 
 local function doKill()
@@ -272,7 +345,7 @@ local function doKill()
     local commanders = {}
     for _, obj in pairs(workspace:GetDescendants()) do
         if obj:IsA("Model") then
-            local name = obj.Name:lower()
+            local name = (obj.Name or ""):lower()
             if name:find("commander") or name:find("boss") or name:find("chef") or name:find("lider") then
                 local health = obj:FindFirstChild("Health") or obj:FindFirstChild("Humanoid")
                 if health and health.Value > 0 then
@@ -293,18 +366,8 @@ local function doKill()
         end
     end
     
-    -- Tenta via interface
     if not killed then
-        killed = clickPattern("attack", false)
-    end
-    if not killed then
-        killed = clickPattern("commander", false)
-    end
-    if not killed then
-        killed = clickPattern("boss", false)
-    end
-    if not killed then
-        killed = clickPattern("atacar", false)
+        clickPattern("attack") or clickPattern("commander") or clickPattern("boss")
     end
 end
 
@@ -313,22 +376,17 @@ end
 -- =============================================
 
 local function getDelay()
-    if not config.antiBan then return 0.02 end
-    local delays = {0.03, 0.05, 0.08, 0.1, 0.12, 0.15, 0.18, 0.2}
-    return delays[math.random(#delays)]
+    return math.random(3, 8) / 100
 end
 
 local function getPause()
-    if not config.antiBan then return 0.1 end
-    local pauses = {0.3, 0.5, 0.7, 0.8, 1.0, 1.2, 1.5}
-    return pauses[math.random(#pauses)]
+    return math.random(5, 15) / 10
 end
 
 local function mainLoop()
     while running do
         task.wait(getDelay())
         
-        -- Executa funcoes em ordem com pausas
         if config.autoMerge then
             doMerge()
             task.wait(getDelay())
@@ -367,11 +425,10 @@ local function mainLoop()
 end
 
 -- =============================================
--- UI MODERNA E FUNCIONAL
+-- UI PRETA
 -- =============================================
 
 local function createUI()
-    -- Remove UI anterior se existir
     if uiInstance then
         pcall(function() uiInstance:Destroy() end)
     end
@@ -382,28 +439,29 @@ local function createUI()
     screenGui.ResetOnSpawn = false
     uiInstance = screenGui
     
-    -- Frame principal
+    -- Frame principal - PRETO
     local mainFrame = Instance.new("Frame")
-    mainFrame.Size = UDim2.new(0, 250, 0, 400)
+    mainFrame.Size = UDim2.new(0, 250, 0, 420)
     mainFrame.Position = UDim2.new(0.02, 0, 0.1, 0)
-    mainFrame.BackgroundColor3 = Color3.fromRGB(20, 22, 30)
+    mainFrame.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
     mainFrame.BackgroundTransparency = 0.05
     mainFrame.BorderSizePixel = 1
-    mainFrame.BorderColor3 = Color3.fromRGB(60, 65, 85)
+    mainFrame.BorderColor3 = Color3.fromRGB(40, 40, 40)
     mainFrame.ClipsDescendants = true
     mainFrame.Parent = screenGui
     
-    -- Header
+    -- Header - PRETO
     local header = Instance.new("Frame")
     header.Size = UDim2.new(1, 0, 0, 45)
-    header.BackgroundColor3 = Color3.fromRGB(30, 33, 45)
+    header.BackgroundColor3 = Color3.fromRGB(10, 10, 10)
     header.BorderSizePixel = 0
     header.Parent = mainFrame
     
+    -- Linha de destaque
     local accentLine = Instance.new("Frame")
     accentLine.Size = UDim2.new(1, 0, 0, 2)
     accentLine.Position = UDim2.new(0, 0, 1, -2)
-    accentLine.BackgroundColor3 = Color3.fromRGB(255, 180, 0)
+    accentLine.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
     accentLine.BorderSizePixel = 0
     accentLine.Parent = header
     
@@ -411,7 +469,7 @@ local function createUI()
     title.Size = UDim2.new(0.7, 0, 1, 0)
     title.Position = UDim2.new(0, 12, 0, 0)
     title.BackgroundTransparency = 1
-    title.Text = "NUKE CONTROL V5"
+    title.Text = "NUKE CONTROL"
     title.TextColor3 = Color3.fromRGB(255, 255, 255)
     title.TextSize = 14
     title.TextXAlignment = Enum.TextXAlignment.Left
@@ -423,7 +481,7 @@ local function createUI()
     subtitle.Position = UDim2.new(0, 12, 0, 20)
     subtitle.BackgroundTransparency = 1
     subtitle.Text = "Merge a Nuclear Bomb"
-    subtitle.TextColor3 = Color3.fromRGB(150, 155, 180)
+    subtitle.TextColor3 = Color3.fromRGB(150, 150, 150)
     subtitle.TextSize = 9
     subtitle.TextXAlignment = Enum.TextXAlignment.Left
     subtitle.Font = Enum.Font.Gotham
@@ -433,7 +491,7 @@ local function createUI()
     local closeBtn = Instance.new("TextButton")
     closeBtn.Size = UDim2.new(0, 28, 0, 28)
     closeBtn.Position = UDim2.new(1, -35, 0, 8)
-    closeBtn.BackgroundColor3 = Color3.fromRGB(45, 48, 65)
+    closeBtn.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
     closeBtn.Text = "X"
     closeBtn.TextColor3 = Color3.fromRGB(200, 200, 200)
     closeBtn.TextSize = 14
@@ -448,12 +506,12 @@ local function createUI()
     end)
     
     closeBtn.MouseEnter:Connect(function()
-        closeBtn.BackgroundColor3 = Color3.fromRGB(200, 40, 40)
+        closeBtn.BackgroundColor3 = Color3.fromRGB(200, 20, 20)
         closeBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
     end)
     
     closeBtn.MouseLeave:Connect(function()
-        closeBtn.BackgroundColor3 = Color3.fromRGB(45, 48, 65)
+        closeBtn.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
         closeBtn.TextColor3 = Color3.fromRGB(200, 200, 200)
     end)
     
@@ -464,8 +522,8 @@ local function createUI()
     content.BackgroundTransparency = 1
     content.BorderSizePixel = 0
     content.ScrollBarThickness = 3
-    content.ScrollBarImageColor3 = Color3.fromRGB(50, 55, 75)
-    content.CanvasSize = UDim2.new(0, 0, 0, 420)
+    content.ScrollBarImageColor3 = Color3.fromRGB(50, 50, 50)
+    content.CanvasSize = UDim2.new(0, 0, 0, 460)
     content.Parent = mainFrame
     
     -- Funcao para criar toggle
@@ -481,7 +539,7 @@ local function createUI()
         label.Position = UDim2.new(0, 5, 0, 0)
         label.BackgroundTransparency = 1
         label.Text = text
-        label.TextColor3 = Color3.fromRGB(210, 215, 235)
+        label.TextColor3 = Color3.fromRGB(220, 220, 220)
         label.TextSize = 12
         label.TextXAlignment = Enum.TextXAlignment.Left
         label.Font = Enum.Font.Gotham
@@ -490,14 +548,14 @@ local function createUI()
         local switchBg = Instance.new("Frame")
         switchBg.Size = UDim2.new(0, 42, 0, 22)
         switchBg.Position = UDim2.new(1, -48, 0.5, -11)
-        switchBg.BackgroundColor3 = Color3.fromRGB(55, 58, 75)
+        switchBg.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
         switchBg.BorderSizePixel = 0
         switchBg.Parent = frame
         
         local switchCircle = Instance.new("Frame")
         switchCircle.Size = UDim2.new(0, 16, 0, 16)
         switchCircle.Position = UDim2.new(0, 3, 0, 3)
-        switchCircle.BackgroundColor3 = Color3.fromRGB(150, 155, 175)
+        switchCircle.BackgroundColor3 = Color3.fromRGB(100, 100, 100)
         switchCircle.BorderSizePixel = 0
         switchCircle.Parent = switchBg
         
@@ -521,8 +579,8 @@ local function createUI()
             state = newState
             config[configKey] = newState
             
-            local bgColor = newState and Color3.fromRGB(255, 180, 0) or Color3.fromRGB(55, 58, 75)
-            local circleColor = newState and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(150, 155, 175)
+            local bgColor = newState and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(40, 40, 40)
+            local circleColor = newState and Color3.fromRGB(0, 0, 0) or Color3.fromRGB(100, 100, 100)
             local circlePos = newState and UDim2.new(1, -19, 0, 3) or UDim2.new(0, 3, 0, 3)
             
             switchBg.BackgroundColor3 = bgColor
@@ -537,16 +595,16 @@ local function createUI()
         return updateSwitch
     end
     
-    -- Criar toggles
+    -- Toggles
     local toggleData = {
-        {"Auto Merge", "autoMerge", 5},
+        {"Auto Merge (Teleport)", "autoMerge", 5},
         {"Auto Locked", "autoLocked", 46},
         {"Tier Upgrade", "autoTier", 87},
         {"Spawn Upgrade", "autoSpawn", 128},
         {"Lock Upgrade", "autoLockUpgrade", 169},
         {"Auto Rebirth", "autoRebirth", 210},
-        {"Auto Kill", "autoKill", 251},
-        {"Anti-Ban", "antiBan", 292},
+        {"Auto Kill Commander", "autoKill", 251},
+        {"Teleport to Nukes", "teleportEnabled", 292},
     }
     
     for _, data in ipairs(toggleData) do
@@ -564,8 +622,8 @@ local function createUI()
     cmdLabel.Size = UDim2.new(0.5, 0, 1, 0)
     cmdLabel.Position = UDim2.new(0, 5, 0, 0)
     cmdLabel.BackgroundTransparency = 1
-    cmdLabel.Text = "Commander"
-    cmdLabel.TextColor3 = Color3.fromRGB(210, 215, 235)
+    cmdLabel.Text = "Commander Target"
+    cmdLabel.TextColor3 = Color3.fromRGB(220, 220, 220)
     cmdLabel.TextSize = 12
     cmdLabel.TextXAlignment = Enum.TextXAlignment.Left
     cmdLabel.Font = Enum.Font.Gotham
@@ -576,7 +634,7 @@ local function createUI()
     cmdValue.Position = UDim2.new(0.8, -25, 0, 0)
     cmdValue.BackgroundTransparency = 1
     cmdValue.Text = "1"
-    cmdValue.TextColor3 = Color3.fromRGB(255, 180, 0)
+    cmdValue.TextColor3 = Color3.fromRGB(255, 255, 255)
     cmdValue.TextSize = 16
     cmdValue.TextXAlignment = Enum.TextXAlignment.Center
     cmdValue.Font = Enum.Font.GothamBold
@@ -585,7 +643,7 @@ local function createUI()
     local btnLeft = Instance.new("TextButton")
     btnLeft.Size = UDim2.new(0, 24, 0, 24)
     btnLeft.Position = UDim2.new(0.7, 0, 0.5, -12)
-    btnLeft.BackgroundColor3 = Color3.fromRGB(40, 43, 60)
+    btnLeft.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
     btnLeft.Text = "<"
     btnLeft.TextColor3 = Color3.fromRGB(200, 200, 200)
     btnLeft.TextSize = 12
@@ -596,7 +654,7 @@ local function createUI()
     local btnRight = Instance.new("TextButton")
     btnRight.Size = UDim2.new(0, 24, 0, 24)
     btnRight.Position = UDim2.new(0.95, -24, 0.5, -12)
-    btnRight.BackgroundColor3 = Color3.fromRGB(40, 43, 60)
+    btnRight.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
     btnRight.Text = ">"
     btnRight.TextColor3 = Color3.fromRGB(200, 200, 200)
     btnRight.TextSize = 12
@@ -618,7 +676,7 @@ local function createUI()
     local statusBar = Instance.new("Frame")
     statusBar.Size = UDim2.new(1, 0, 0, 20)
     statusBar.Position = UDim2.new(0, 0, 1, -20)
-    statusBar.BackgroundColor3 = Color3.fromRGB(15, 17, 25)
+    statusBar.BackgroundColor3 = Color3.fromRGB(10, 10, 10)
     statusBar.BorderSizePixel = 0
     statusBar.Parent = mainFrame
     
@@ -643,7 +701,7 @@ local function createUI()
             if config.autoRebirth then active = active + 1 end
             if config.autoKill then active = active + 1 end
             
-            statusText.Text = active > 0 and ("Active: " .. active .. " | Anti-Ban: " .. (config.antiBan and "ON" or "OFF")) or "Idle"
+            statusText.Text = active > 0 and ("Active: " .. active .. " modules | Teleport: " .. (config.teleportEnabled and "ON" or "OFF")) or "Idle"
             task.wait(0.5)
         end
     end)
@@ -686,27 +744,27 @@ end
 -- =============================================
 
 print("========================================")
-print("  NUKE CONTROL V5 - FUNCIONAL")
-print("  Merge a Nuclear Bomb")
+print("  NUKE CONTROL V6 - UI PRETA")
+print("  Auto Merge com Teleporte")
 print("========================================")
 print("  Funcionalidades:")
-print("  - Auto Merge (Fast)")
+print("  - Auto Merge (Teleport + Merge)")
 print("  - Auto Locked")
 print("  - Tier Upgrade")
 print("  - Spawn Upgrade")
 print("  - Lock Upgrade")
 print("  - Auto Rebirth")
 print("  - Auto Kill Commander")
-print("  - Anti-Ban System")
+print("  - Teleport para Nukes")
 print("========================================")
 
 -- Criar UI
 createUI()
 
--- Iniciar loop principal
+-- Iniciar loop
 task.spawn(mainLoop)
 
--- Manter script rodando
+-- Manter script
 while running do
     task.wait(5)
     if not player.PlayerGui:FindFirstChild("NukeUI") then
