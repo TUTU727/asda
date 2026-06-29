@@ -1,0 +1,312 @@
+--[[
+    SCRIPT AUTO-COLLECT ORBS PARA TRANSFORMAÇÃO
+    Coleta automaticamente as orbs que aparecem no jogo
+    APENAS PARA FINS EDUCACIONAIS
+]]
+
+local OrionLib = loadstring(game:HttpGet("https://raw.githubusercontent.com/shlexware/Orion/main/source"))()
+
+local Window = OrionLib:MakeWindow({
+    Name = "Auto Collect Orbs",
+    HidePremium = false,
+    SaveConfig = true,
+    ConfigFolder = "OrbCollector"
+})
+
+local MainTab = Window:MakeTab({
+    Name = "Auto Collect",
+    Icon = "rbxassetid://4483345998",
+    PremiumOnly = false
+})
+
+local collectEnabled = false
+local collectLoop = nil
+local lastCollect = 0
+local collectDistance = 50
+
+local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
+local RunService = game:GetService("RunService")
+local LocalPlayer = Players.LocalPlayer
+
+local function FindOrbs()
+    local orbs = {}
+    local char = LocalPlayer.Character
+    if not char then return orbs end
+    local root = char:FindFirstChild("HumanoidRootPart")
+    if not root then return orbs end
+    local rootPos = root.Position
+    
+    -- Procurar por orbs no workspace
+    for _, obj in pairs(Workspace:GetDescendants()) do
+        if obj:IsA("BasePart") or obj:IsA("Model") then
+            local name = string.lower(obj.Name)
+            
+            -- Verificar se é uma orb (nomes comuns)
+            if string.find(name, "orb") or 
+               string.find(name, "sphere") or
+               string.find(name, "ball") or
+               string.find(name, "collect") or
+               string.find(name, "pickup") or
+               string.find(name, "energy") or
+               string.find(name, "power") or
+               string.find(name, "xp") or
+               string.find(name, "exp") or
+               string.find(name, "coin") or
+               string.find(name, "gem") or
+               string.find(name, "crystal") then
+                
+                local pos = nil
+                local objRoot = nil
+                
+                if obj:IsA("BasePart") then
+                    pos = obj.Position
+                    objRoot = obj
+                elseif obj:IsA("Model") then
+                    local rootPart = obj:FindFirstChild("HumanoidRootPart") or obj:FindFirstChild("Part") or obj:FindFirstChild("PrimaryPart")
+                    if rootPart and rootPart:IsA("BasePart") then
+                        pos = rootPart.Position
+                        objRoot = rootPart
+                    end
+                end
+                
+                if pos and objRoot then
+                    local dist = (rootPos - pos).Magnitude
+                    if dist < 500 then -- Distância máxima de busca
+                        table.insert(orbs, {
+                            Object = obj,
+                            Root = objRoot,
+                            Pos = pos,
+                            Dist = dist
+                        })
+                    end
+                end
+            end
+        end
+    end
+    
+    -- Ordenar por distância
+    table.sort(orbs, function(a, b)
+        return a.Dist < b.Dist
+    end)
+    
+    return orbs
+end
+
+local function CollectOrb(orb)
+    local char = LocalPlayer.Character
+    if not char then return end
+    local root = char:FindFirstChild("HumanoidRootPart")
+    if not root then return end
+    
+    -- Teleportar para a orb
+    pcall(function()
+        root.CFrame = CFrame.new(orb.Pos)
+    end)
+    
+    -- Tentar coletar
+    local success = false
+    
+    -- Método 1: Clicar na orb (simular toque)
+    pcall(function()
+        local fire = orb.Object:FindFirstChild("ClickDetector") or orb.Object:FindFirstChild("ProximityPrompt")
+        if fire then
+            if fire:IsA("ClickDetector") then
+                fire:Click()
+            elseif fire:IsA("ProximityPrompt") then
+                fire:Hold()
+                task.wait(0.1)
+                fire:Release()
+            end
+            success = true
+        end
+    end)
+    
+    -- Método 2: Evento remoto
+    if not success then
+        pcall(function()
+            local events = {"Collect", "CollectOrb", "Pickup", "Grab", "Take"}
+            for _, name in pairs(events) do
+                local event = game:GetService("ReplicatedStorage"):FindFirstChild(name)
+                if event then
+                    event:FireServer(orb.Object)
+                    success = true
+                    break
+                end
+            end
+        end)
+    end
+    
+    -- Método 3: Tool (se tiver)
+    if not success then
+        pcall(function()
+            local tool = char:FindFirstChildOfClass("Tool")
+            if tool then
+                tool:Activate()
+                success = true
+            end
+        end)
+    end
+    
+    return success
+end
+
+local function CollectLoop()
+    if not collectEnabled then return end
+    
+    local char = LocalPlayer.Character
+    if not char then return end
+    
+    local hum = char:FindFirstChild("Humanoid")
+    if not hum or hum.Health <= 0 then return end
+    
+    -- Procurar orbs
+    local orbs = FindOrbs()
+    
+    if #orbs == 0 then
+        return
+    end
+    
+    local target = orbs[1]
+    
+    -- Se estiver muito longe, teleportar
+    if target.Dist > collectDistance then
+        CollectOrb(target)
+        task.wait(0.05)
+    else
+        -- Se estiver perto, coletar
+        CollectOrb(target)
+    end
+end
+
+local function ToggleCollect(state)
+    collectEnabled = state
+    
+    if collectEnabled then
+        if collectLoop then
+            collectLoop:Disconnect()
+            collectLoop = nil
+        end
+        
+        collectLoop = RunService.Heartbeat:Connect(CollectLoop)
+        
+        OrionLib:MakeNotification({
+            Name = "Auto Collect",
+            Content = "✅ Ativado!",
+            Image = "rbxassetid://4483345998",
+            Time = 2
+        })
+    else
+        if collectLoop then
+            collectLoop:Disconnect()
+            collectLoop = nil
+        end
+        
+        OrionLib:MakeNotification({
+            Name = "Auto Collect",
+            Content = "❌ Desativado",
+            Image = "rbxassetid://4483345998",
+            Time = 2
+        })
+    end
+end
+
+-- Criar UI
+MainTab:AddToggle({
+    Name = "🔁 Auto Collect Orbs",
+    Default = false,
+    Callback = function(v)
+        ToggleCollect(v)
+    end
+})
+
+MainTab:AddSlider({
+    Name = "📏 Distância de Coleta",
+    Min = 10,
+    Max = 100,
+    Default = 50,
+    Color = Color3.fromRGB(255, 255, 255),
+    Increment = 5,
+    ValueName = "studs",
+    Callback = function(v)
+        collectDistance = v
+    end
+})
+
+MainTab:AddButton({
+    Name = "🔍 Escanear Orbs",
+    Callback = function()
+        local orbs = FindOrbs()
+        print("=== ORBS ENCONTRADAS: " .. #orbs .. " ===")
+        for i, orb in ipairs(orbs) do
+            print(string.format("%d. %s | Dist: %.1f", i, tostring(orb.Object), orb.Dist))
+        end
+        
+        if #orbs == 0 then
+            print("❌ Nenhuma orb encontrada!")
+        end
+        
+        OrionLib:MakeNotification({
+            Name = "Escanear",
+            Content = #orbs > 0 and "✅ " .. #orbs .. " orbs encontradas!" or "❌ Nenhuma orb!",
+            Image = "rbxassetid://4483345998",
+            Time = 3
+        })
+    end
+})
+
+MainTab:AddButton({
+    Name = "🚀 Teleportar para Orb",
+    Callback = function()
+        local orbs = FindOrbs()
+        if #orbs > 0 then
+            local char = LocalPlayer.Character
+            if char then
+                local root = char:FindFirstChild("HumanoidRootPart")
+                if root then
+                    pcall(function()
+                        root.CFrame = CFrame.new(orbs[1].Pos)
+                    end)
+                    OrionLib:MakeNotification({
+                        Name = "Teleporte",
+                        Content = "✅ Teleportado para a orb!",
+                        Image = "rbxassetid://4483345998",
+                        Time = 2
+                    })
+                end
+            end
+        else
+            OrionLib:MakeNotification({
+                Name = "Erro",
+                Content = "❌ Nenhuma orb encontrada!",
+                Image = "rbxassetid://4483345998",
+                Time = 2
+            })
+        end
+    end
+})
+
+MainTab:AddButton({
+    Name = "ℹ️ Como usar",
+    Callback = function()
+        OrionLib:MakeNotification({
+            Name = "Como usar",
+            Content = "1. Ative o toggle\n2. O script vai procurar orbs\n3. Teleporta e coleta automaticamente",
+            Image = "rbxassetid://4483345998",
+            Time = 5
+        })
+    end
+})
+
+-- Limpeza
+LocalPlayer.OnTeleport:Connect(function()
+    if collectLoop then
+        collectLoop:Disconnect()
+        collectLoop = nil
+    end
+    collectEnabled = false
+end)
+
+print("=== AUTO COLLECT ORBS CARREGADO ===")
+print("✅ Use o toggle para ativar")
+print("✅ Ajuste a distância de coleta")
