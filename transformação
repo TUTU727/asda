@@ -1,312 +1,422 @@
---[[
-    SCRIPT AUTO-COLLECT ORBS PARA TRANSFORMAÇÃO
-    Coleta automaticamente as orbs que aparecem no jogo
-    APENAS PARA FINS EDUCACIONAIS
-]]
-
-local OrionLib = loadstring(game:HttpGet("https://raw.githubusercontent.com/shlexware/Orion/main/source"))()
-
-local Window = OrionLib:MakeWindow({
-    Name = "Auto Collect Orbs",
-    HidePremium = false,
-    SaveConfig = true,
-    ConfigFolder = "OrbCollector"
-})
-
-local MainTab = Window:MakeTab({
-    Name = "Auto Collect",
-    Icon = "rbxassetid://4483345998",
-    PremiumOnly = false
-})
-
-local collectEnabled = false
-local collectLoop = nil
-local lastCollect = 0
-local collectDistance = 50
-
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
 local RunService = game:GetService("RunService")
 local LocalPlayer = Players.LocalPlayer
 
-local function FindOrbs()
-    local orbs = {}
-    local char = LocalPlayer.Character
-    if not char then return orbs end
-    local root = char:FindFirstChild("HumanoidRootPart")
-    if not root then return orbs end
-    local rootPos = root.Position
-    
-    -- Procurar por orbs no workspace
-    for _, obj in pairs(Workspace:GetDescendants()) do
-        if obj:IsA("BasePart") or obj:IsA("Model") then
-            local name = string.lower(obj.Name)
-            
-            -- Verificar se é uma orb (nomes comuns)
-            if string.find(name, "orb") or 
-               string.find(name, "sphere") or
-               string.find(name, "ball") or
-               string.find(name, "collect") or
-               string.find(name, "pickup") or
-               string.find(name, "energy") or
-               string.find(name, "power") or
-               string.find(name, "xp") or
-               string.find(name, "exp") or
-               string.find(name, "coin") or
-               string.find(name, "gem") or
-               string.find(name, "crystal") then
-                
-                local pos = nil
-                local objRoot = nil
-                
-                if obj:IsA("BasePart") then
-                    pos = obj.Position
-                    objRoot = obj
-                elseif obj:IsA("Model") then
-                    local rootPart = obj:FindFirstChild("HumanoidRootPart") or obj:FindFirstChild("Part") or obj:FindFirstChild("PrimaryPart")
-                    if rootPart and rootPart:IsA("BasePart") then
-                        pos = rootPart.Position
-                        objRoot = rootPart
-                    end
-                end
-                
-                if pos and objRoot then
-                    local dist = (rootPos - pos).Magnitude
-                    if dist < 500 then -- Distância máxima de busca
-                        table.insert(orbs, {
-                            Object = obj,
-                            Root = objRoot,
-                            Pos = pos,
-                            Dist = dist
-                        })
-                    end
-                end
-            end
-        end
-    end
-    
-    -- Ordenar por distância
-    table.sort(orbs, function(a, b)
-        return a.Dist < b.Dist
-    end)
-    
-    return orbs
-end
+local collectEnabled = false
+local collectLoop = nil
+local orbCount = 0
+local dragging = false
+local safePosition = nil
+local pointIndex = 0
 
-local function CollectOrb(orb)
-    local char = LocalPlayer.Character
-    if not char then return end
-    local root = char:FindFirstChild("HumanoidRootPart")
-    if not root then return end
+local orbNames = {"berry", "berries", "berrys", "collect", "var"}
+
+local orbitPoints = {
+    {x = 4.5, z = 0},
+    {x = 3.5, z = 3},
+    {x = 0, z = 4.5},
+    {x = -3.5, z = 3},
+    {x = -4.5, z = 0},
+    {x = -3.5, z = -3},
+    {x = 0, z = -4.5},
+    {x = 3.5, z = -3},
+}
+
+local function CreateUI()
+    local screenGui = Instance.new("ScreenGui")
+    screenGui.Name = "BerryCollector"
+    screenGui.ResetOnSpawn = false
+    screenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
     
-    -- Teleportar para a orb
-    pcall(function()
-        root.CFrame = CFrame.new(orb.Pos)
-    end)
+    local frame = Instance.new("Frame")
+    frame.Size = UDim2.new(0, 200, 0, 110)
+    frame.Position = UDim2.new(0.5, -100, 0.3, 0)
+    frame.BackgroundColor3 = Color3.fromRGB(15, 15, 25)
+    frame.BackgroundTransparency = 0.15
+    frame.BorderSizePixel = 0
+    frame.Parent = screenGui
     
-    -- Tentar coletar
-    local success = false
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, 12)
+    corner.Parent = frame
     
-    -- Método 1: Clicar na orb (simular toque)
-    pcall(function()
-        local fire = orb.Object:FindFirstChild("ClickDetector") or orb.Object:FindFirstChild("ProximityPrompt")
-        if fire then
-            if fire:IsA("ClickDetector") then
-                fire:Click()
-            elseif fire:IsA("ProximityPrompt") then
-                fire:Hold()
-                task.wait(0.1)
-                fire:Release()
-            end
-            success = true
+    local titleBar = Instance.new("Frame")
+    titleBar.Size = UDim2.new(1, 0, 0, 30)
+    titleBar.BackgroundColor3 = Color3.fromRGB(30, 30, 50)
+    titleBar.BackgroundTransparency = 0.3
+    titleBar.Parent = frame
+    
+    local titleCorner = Instance.new("UICorner")
+    titleCorner.CornerRadius = UDim.new(0, 12)
+    titleCorner.Parent = titleBar
+    
+    local title = Instance.new("TextLabel")
+    title.Size = UDim2.new(1, 0, 1, 0)
+    title.BackgroundTransparency = 1
+    title.Text = "🌀 FLING SUAVE"
+    title.TextColor3 = Color3.fromRGB(255, 255, 255)
+    title.TextSize = 14
+    title.Font = Enum.Font.GothamBold
+    title.Parent = titleBar
+    
+    local dragStart = nil
+    local startPos = nil
+    
+    titleBar.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragStart = input.Position
+            startPos = frame.Position
+            dragging = true
         end
     end)
     
-    -- Método 2: Evento remoto
-    if not success then
-        pcall(function()
-            local events = {"Collect", "CollectOrb", "Pickup", "Grab", "Take"}
-            for _, name in pairs(events) do
-                local event = game:GetService("ReplicatedStorage"):FindFirstChild(name)
-                if event then
-                    event:FireServer(orb.Object)
-                    success = true
-                    break
-                end
+    titleBar.InputChanged:Connect(function(input)
+        if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+            local delta = input.Position - dragStart
+            frame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+        end
+    end)
+    
+    titleBar.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = false
+        end
+    end)
+    
+    local statusText = Instance.new("TextLabel")
+    statusText.Size = UDim2.new(1, -20, 0, 20)
+    statusText.Position = UDim2.new(0, 10, 0, 38)
+    statusText.BackgroundTransparency = 1
+    statusText.Text = "🔴 Desativado"
+    statusText.TextColor3 = Color3.fromRGB(255, 100, 100)
+    statusText.TextSize = 12
+    statusText.TextXAlignment = Enum.TextXAlignment.Left
+    statusText.Font = Enum.Font.Gotham
+    statusText.Parent = frame
+    
+    local infoText = Instance.new("TextLabel")
+    infoText.Size = UDim2.new(1, -20, 0, 16)
+    infoText.Position = UDim2.new(0, 10, 0, 58)
+    infoText.BackgroundTransparency = 1
+    infoText.Text = "Coletados: 0"
+    infoText.TextColor3 = Color3.fromRGB(150, 150, 150)
+    infoText.TextSize = 10
+    infoText.TextXAlignment = Enum.TextXAlignment.Left
+    infoText.Font = Enum.Font.Gotham
+    infoText.Parent = frame
+    
+    local toggle = Instance.new("TextButton")
+    toggle.Size = UDim2.new(0, 140, 0, 28)
+    toggle.Position = UDim2.new(0.5, -70, 0, 78)
+    toggle.BackgroundColor3 = Color3.fromRGB(0, 180, 255)
+    toggle.BackgroundTransparency = 0.2
+    toggle.Text = "▶ ATIVAR"
+    toggle.TextColor3 = Color3.fromRGB(255, 255, 255)
+    toggle.TextSize = 13
+    toggle.Font = Enum.Font.GothamBold
+    toggle.Parent = frame
+    
+    local toggleCorner = Instance.new("UICorner")
+    toggleCorner.CornerRadius = UDim.new(0, 8)
+    toggleCorner.Parent = toggle
+    
+    -- ===== FUNÇÕES =====
+    local function IsBerry(obj)
+        if not obj then return false end
+        local name = string.lower(obj.Name)
+        for i = 1, #orbNames do
+            if string.find(name, orbNames[i]) then
+                return true
             end
-        end)
-    end
-    
-    -- Método 3: Tool (se tiver)
-    if not success then
-        pcall(function()
-            local tool = char:FindFirstChildOfClass("Tool")
-            if tool then
-                tool:Activate()
-                success = true
-            end
-        end)
-    end
-    
-    return success
-end
-
-local function CollectLoop()
-    if not collectEnabled then return end
-    
-    local char = LocalPlayer.Character
-    if not char then return end
-    
-    local hum = char:FindFirstChild("Humanoid")
-    if not hum or hum.Health <= 0 then return end
-    
-    -- Procurar orbs
-    local orbs = FindOrbs()
-    
-    if #orbs == 0 then
-        return
-    end
-    
-    local target = orbs[1]
-    
-    -- Se estiver muito longe, teleportar
-    if target.Dist > collectDistance then
-        CollectOrb(target)
-        task.wait(0.05)
-    else
-        -- Se estiver perto, coletar
-        CollectOrb(target)
-    end
-end
-
-local function ToggleCollect(state)
-    collectEnabled = state
-    
-    if collectEnabled then
-        if collectLoop then
-            collectLoop:Disconnect()
-            collectLoop = nil
         end
-        
-        collectLoop = RunService.Heartbeat:Connect(CollectLoop)
-        
-        OrionLib:MakeNotification({
-            Name = "Auto Collect",
-            Content = "✅ Ativado!",
-            Image = "rbxassetid://4483345998",
-            Time = 2
-        })
-    else
-        if collectLoop then
-            collectLoop:Disconnect()
-            collectLoop = nil
-        end
-        
-        OrionLib:MakeNotification({
-            Name = "Auto Collect",
-            Content = "❌ Desativado",
-            Image = "rbxassetid://4483345998",
-            Time = 2
-        })
+        return false
     end
-end
-
--- Criar UI
-MainTab:AddToggle({
-    Name = "🔁 Auto Collect Orbs",
-    Default = false,
-    Callback = function(v)
-        ToggleCollect(v)
-    end
-})
-
-MainTab:AddSlider({
-    Name = "📏 Distância de Coleta",
-    Min = 10,
-    Max = 100,
-    Default = 50,
-    Color = Color3.fromRGB(255, 255, 255),
-    Increment = 5,
-    ValueName = "studs",
-    Callback = function(v)
-        collectDistance = v
-    end
-})
-
-MainTab:AddButton({
-    Name = "🔍 Escanear Orbs",
-    Callback = function()
-        local orbs = FindOrbs()
-        print("=== ORBS ENCONTRADAS: " .. #orbs .. " ===")
-        for i, orb in ipairs(orbs) do
-            print(string.format("%d. %s | Dist: %.1f", i, tostring(orb.Object), orb.Dist))
-        end
+    
+    local function FindBerries()
+        local items = {}
+        local char = LocalPlayer.Character
+        if not char then return items end
+        local root = char:FindFirstChild("HumanoidRootPart")
+        if not root then return items end
         
-        if #orbs == 0 then
-            print("❌ Nenhuma orb encontrada!")
-        end
+        local rootPos = root.Position
         
-        OrionLib:MakeNotification({
-            Name = "Escanear",
-            Content = #orbs > 0 and "✅ " .. #orbs .. " orbs encontradas!" or "❌ Nenhuma orb!",
-            Image = "rbxassetid://4483345998",
-            Time = 3
-        })
-    end
-})
-
-MainTab:AddButton({
-    Name = "🚀 Teleportar para Orb",
-    Callback = function()
-        local orbs = FindOrbs()
-        if #orbs > 0 then
-            local char = LocalPlayer.Character
-            if char then
-                local root = char:FindFirstChild("HumanoidRootPart")
-                if root then
-                    pcall(function()
-                        root.CFrame = CFrame.new(orbs[1].Pos)
-                    end)
-                    OrionLib:MakeNotification({
-                        Name = "Teleporte",
-                        Content = "✅ Teleportado para a orb!",
-                        Image = "rbxassetid://4483345998",
-                        Time = 2
+        for _, obj in pairs(Workspace:GetDescendants()) do
+            if obj:IsA("BasePart") and IsBerry(obj) then
+                local dist = (rootPos - obj.Position).Magnitude
+                if dist < 300 and dist > 2 then
+                    table.insert(items, {
+                        Object = obj,
+                        Pos = obj.Position,
+                        Dist = dist
                     })
                 end
             end
-        else
-            OrionLib:MakeNotification({
-                Name = "Erro",
-                Content = "❌ Nenhuma orb encontrada!",
-                Image = "rbxassetid://4483345998",
-                Time = 2
-            })
         end
+        
+        table.sort(items, function(a, b)
+            return a.Dist < b.Dist
+        end)
+        
+        return items
     end
-})
-
-MainTab:AddButton({
-    Name = "ℹ️ Como usar",
-    Callback = function()
-        OrionLib:MakeNotification({
-            Name = "Como usar",
-            Content = "1. Ative o toggle\n2. O script vai procurar orbs\n3. Teleporta e coleta automaticamente",
-            Image = "rbxassetid://4483345998",
-            Time = 5
-        })
+    
+    -- ===== SALVAR POSIÇÃO SEGURA =====
+    local function SaveSafePosition()
+        local char = LocalPlayer.Character
+        if not char then return end
+        local root = char:FindFirstChild("HumanoidRootPart")
+        if not root then return end
+        
+        local currentPos = root.Position
+        safePosition = Vector3.new(currentPos.X, 50, currentPos.Z)
+        print("📍 Posição segura salva no alto: " .. tostring(safePosition))
     end
-})
+    
+    -- ===== TELEPORTE FORÇADO (MÚLTIPLOS MÉTODOS) =====
+    local function ForceTeleport(pos)
+        local char = LocalPlayer.Character
+        if not char then return false end
+        local root = char:FindFirstChild("HumanoidRootPart")
+        if not root then return false end
+        
+        local hum = char:FindFirstChild("Humanoid")
+        
+        -- Método 1: CFrame direto
+        local success = false
+        pcall(function()
+            root.CFrame = CFrame.new(pos)
+            success = true
+        end)
+        
+        -- Método 2: BodyVelocity forçado
+        if not success then
+            pcall(function()
+                local bv = Instance.new("BodyVelocity")
+                bv.MaxForce = Vector3.new(1e9, 1e9, 1e9)
+                bv.Velocity = (pos - root.Position).Unit * 10000
+                bv.Parent = root
+                task.wait(0.01)
+                bv:Destroy()
+                root.CFrame = CFrame.new(pos)
+                success = true
+            end)
+        end
+        
+        -- Método 3: Tween
+        if not success then
+            pcall(function()
+                local tween = game:GetService("TweenService"):Create(root, TweenInfo.new(0.01), {
+                    CFrame = CFrame.new(pos)
+                })
+                tween:Play()
+                tween.Completed:Wait()
+                success = true
+            end)
+        end
+        
+        -- Forçar atualização da posição
+        if success then
+            pcall(function()
+                root.Velocity = Vector3.new(0, 0, 0)
+                root.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+            end)
+        end
+        
+        return success
+    end
+    
+    -- ===== IR PARA POSIÇÃO SEGURA =====
+    local function GoToSafe()
+        if not safePosition then return false end
+        return ForceTeleport(safePosition)
+    end
+    
+    -- ===== FLING PARA PONTO =====
+    local function FlingToPoint(berryPos, point)
+        local targetPos = berryPos + Vector3.new(point.x, 0.5, point.z)
+        return ForceTeleport(targetPos)
+    end
+    
+    -- ===== COLETAR =====
+    local function TryCollect(item)
+        local char = LocalPlayer.Character
+        if not char then return false end
+        local root = char:FindFirstChild("HumanoidRootPart")
+        if not root then return false end
+        
+        local collected = false
+        
+        -- ClickDetector
+        local click = item.Object:FindFirstChild("ClickDetector")
+        if click then
+            pcall(function() click:Click() collected = true end)
+        end
+        
+        -- ProximityPrompt
+        if not collected then
+            local prompt = item.Object:FindFirstChild("ProximityPrompt")
+            if prompt then
+                pcall(function()
+                    prompt:Hold()
+                    task.wait(0.05)
+                    prompt:Release()
+                    collected = true
+                end)
+            end
+        end
+        
+        -- TouchTransmitter
+        if not collected then
+            local touch = item.Object:FindFirstChild("TouchTransmitter")
+            if touch then
+                pcall(function() touch:FireTouch(root) collected = true end)
+            end
+        end
+        
+        -- RemoteEvents
+        if not collected then
+            local events = {"Collect", "Pickup", "Grab", "Take", "Claim", "CollectItem", "CollectBerry"}
+            for i = 1, #events do
+                local event = game:GetService("ReplicatedStorage"):FindFirstChild(events[i])
+                if event then
+                    pcall(function()
+                        event:FireServer(item.Object)
+                        collected = true
+                    end)
+                    if collected then break end
+                end
+            end
+        end
+        
+        return collected
+    end
+    
+    local cachedBerries = {}
+    local lastScan = 0
+    local scanInterval = 0.1
+    local collecting = false
+    
+    local function CollectLoop()
+        if not collectEnabled then return end
+        
+        local char = LocalPlayer.Character
+        if not char then return end
+        
+        local hum = char:FindFirstChild("Humanoid")
+        if not hum or hum.Health <= 0 then return end
+        
+        if collecting then return end
+        
+        if not safePosition then
+            SaveSafePosition()
+        end
+        
+        if tick() - lastScan > scanInterval then
+            cachedBerries = FindBerries()
+            lastScan = tick()
+        end
+        
+        if #cachedBerries == 0 then
+            statusText.Text = "🔍 Procurando..."
+            statusText.TextColor3 = Color3.fromRGB(255, 255, 100)
+            return
+        end
+        
+        local target = cachedBerries[1]
+        
+        if not target.Object or not target.Object.Parent then
+            cachedBerries = {}
+            return
+        end
+        
+        statusText.Text = "🌀 Fling suave..."
+        statusText.TextColor3 = Color3.fromRGB(100, 255, 100)
+        infoText.Text = "Coletados: " .. orbCount
+        
+        collecting = true
+        
+        local collected = false
+        
+        for i = 1, #orbitPoints do
+            pointIndex = pointIndex + 1
+            if pointIndex > #orbitPoints then
+                pointIndex = 1
+            end
+            
+            local point = orbitPoints[pointIndex]
+            FlingToPoint(target.Pos, point)
+            
+            local success = TryCollect(target)
+            if success then
+                collected = true
+                break
+            end
+            
+            task.wait(0.02)
+        end
+        
+        if collected then
+            orbCount = orbCount + 1
+            infoText.Text = "Coletados: " .. orbCount .. " ✅"
+        end
+        
+        if safePosition then
+            GoToSafe()
+        end
+        
+        collecting = false
+        task.wait(0.02)
+    end
+    
+    toggle.MouseButton1Click:Connect(function()
+        collectEnabled = not collectEnabled
+        
+        if collectEnabled then
+            if collectLoop then collectLoop:Disconnect() end
+            collectLoop = RunService.Heartbeat:Connect(CollectLoop)
+            toggle.Text = "⏹ DESATIVAR"
+            toggle.BackgroundColor3 = Color3.fromRGB(255, 50, 50)
+            statusText.Text = "🟢 Ativado"
+            statusText.TextColor3 = Color3.fromRGB(100, 255, 100)
+            pointIndex = 0
+            
+            task.wait(0.3)
+            SaveSafePosition()
+            GoToSafe()
+        else
+            if collectLoop then
+                collectLoop:Disconnect()
+                collectLoop = nil
+            end
+            toggle.Text = "▶ ATIVAR"
+            toggle.BackgroundColor3 = Color3.fromRGB(0, 180, 255)
+            statusText.Text = "🔴 Desativado"
+            statusText.TextColor3 = Color3.fromRGB(255, 100, 100)
+            cachedBerries = {}
+            collecting = false
+        end
+    end)
+    
+    return screenGui
+end
 
--- Limpeza
+local ui = CreateUI()
+
 LocalPlayer.OnTeleport:Connect(function()
     if collectLoop then
         collectLoop:Disconnect()
         collectLoop = nil
     end
     collectEnabled = false
+    if ui then
+        ui:Destroy()
+    end
 end)
 
-print("=== AUTO COLLECT ORBS CARREGADO ===")
-print("✅ Use o toggle para ativar")
-print("✅ Ajuste a distância de coleta")
+print("=== FLING SUAVE - TELEPORTE FORÇADO CARREGADO ===")
+print("🌀 3 métodos de teleporte")
+print("✅ CFrame + BodyVelocity + Tween")
+print("✅ Teleporte forçado e garantido")
+print("✅ Clique em ATIVAR")
