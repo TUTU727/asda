@@ -1,0 +1,938 @@
+local Rayfield = loadstring(game:HttpGet("https://sirius.menu/rayfield"))()
+
+local Window = Rayfield:CreateWindow({
+    Name = "Batata Hub",
+    LoadingTitle = "Batata Hub",
+    LoadingSubtitle = "Batata Scripts",
+    ToggleUIKeybind = "K",
+    ConfigurationSaving = {Enabled = false},
+    KeySystem = false
+})
+
+-- ========== SISTEMA DE SALVAMENTO ==========
+local ConfigFile = "BatataHub_Config.json"
+local HttpService = game:GetService("HttpService")
+
+-- Função para carregar configurações
+local function LoadConfig()
+    local success, data = pcall(function()
+        return readfile(ConfigFile)
+    end)
+    
+    if success and data then
+        local decoded = HttpService:JSONDecode(data)
+        return decoded
+    end
+    return nil
+end
+
+-- Função para salvar configurações
+local function SaveConfig(config)
+    local success, encoded = pcall(function()
+        return HttpService:JSONEncode(config)
+    end)
+    
+    if success then
+        pcall(function()
+            writefile(ConfigFile, encoded)
+        end)
+    end
+end
+
+-- ========== CONFIGURAÇÕES PADRÃO ==========
+local defaultConfig = {
+    aimbot = false,
+    aimOnShoot = false,
+    fov = false,
+    fovSize = 150,
+    part = "Head",
+    esp = false,
+    espBox = false,
+    espSkeleton = false,
+    espHealth = false,
+    espName = false,
+    espDistance = false,
+    espLine = false,
+    chams = false,
+    maxDist = 150,
+    smooth = 0.2,
+    streamerMode = false,
+    wallCheck = false -- NOVA CONFIGURAÇÃO
+}
+
+-- ========== CARREGAR CONFIGURAÇÕES SALVAS ==========
+local Config = LoadConfig()
+if not Config then
+    Config = defaultConfig
+    SaveConfig(Config)
+end
+
+-- ========== VARIÁVEIS GLOBAIS ==========
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local Camera = workspace.CurrentCamera
+local LocalPlayer = Players.LocalPlayer
+local Mouse = LocalPlayer:GetMouse()
+
+-- ========== VARIÁVEIS ==========
+local espObjects = {}
+local chamsList = {}
+local screenCenter = Vector2.new(0, 0)
+local isShooting = false
+local fixedPoint = Vector2.new(0, 0)
+local shootingHold = false
+local fovCircle = nil
+
+-- ========== FUNÇÕES ==========
+local function GetCenter()
+    screenCenter = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
+    fixedPoint = Vector2.new(Camera.ViewportSize.X / 2, 0)
+end
+GetCenter()
+
+local function ClearESP()
+    for i = #espObjects, 1, -1 do
+        local obj = espObjects[i]
+        if obj then
+            pcall(function()
+                if obj.Remove then obj:Remove()
+                elseif obj.Disconnect then obj:Disconnect()
+                end
+            end)
+            espObjects[i] = nil
+        end
+    end
+    espObjects = {}
+end
+
+local function ClearChams()
+    for i = #chamsList, 1, -1 do
+        local obj = chamsList[i]
+        if obj then
+            pcall(function()
+                if obj.Destroy then obj:Destroy()
+                elseif obj.Remove then obj:Remove()
+                end
+            end)
+            chamsList[i] = nil
+        end
+    end
+    chamsList = {}
+end
+
+-- Criar FOV
+local function CreateFOV()
+    if fovCircle then
+        pcall(function() fovCircle:Remove() end)
+    end
+    fovCircle = Drawing.new("Circle")
+    fovCircle.Thickness = 2
+    fovCircle.Radius = Config.fovSize
+    fovCircle.Filled = false
+    fovCircle.Color = Color3.new(0, 1, 0)
+    fovCircle.Transparency = 0.6
+    fovCircle.Visible = false
+    fovCircle.ZIndex = 10
+end
+CreateFOV()
+
+local function GetPart(char)
+    if Config.part == "Head" then
+        return char:FindFirstChild("Head")
+    elseif Config.part == "Neck" or Config.part == "Chest" then
+        return char:FindFirstChild("UpperTorso")
+    end
+    return char:FindFirstChild("HumanoidRootPart")
+end
+
+-- ========== FUNÇÃO DE WALL CHECK ==========
+local function IsVisible(part)
+    if not part then return false end
+    if not Config.wallCheck then return true end
+    
+    local myChar = LocalPlayer.Character
+    if not myChar then return false end
+    
+    local head = myChar:FindFirstChild("Head")
+    if not head then return false end
+    
+    -- Criar raycast para verificar se há obstáculo
+    local params = RaycastParams.new()
+    params.FilterType = Enum.RaycastFilterType.Blacklist
+    params.FilterDescendantsInstances = {LocalPlayer.Character, part.Parent}
+    
+    local origin = head.Position
+    local direction = (part.Position - origin).Unit * (part.Position - origin).Magnitude
+    
+    local ray = workspace:Raycast(origin, direction, params)
+    
+    -- Se o raycast não atingiu nada ou atingiu o alvo, está visível
+    if not ray then
+        return true
+    end
+    
+    -- Verifica se o raycast atingiu o alvo ou parte do alvo
+    local hit = ray.Instance
+    if hit and hit:IsDescendantOf(part.Parent) then
+        return true
+    end
+    
+    return false
+end
+
+-- ========== SALVAR CONFIGURAÇÃO ==========
+local function SaveCurrentConfig()
+    local configToSave = {
+        aimbot = Config.aimbot,
+        aimOnShoot = Config.aimOnShoot,
+        fov = Config.fov,
+        fovSize = Config.fovSize,
+        part = Config.part,
+        esp = Config.esp,
+        espBox = Config.espBox,
+        espSkeleton = Config.espSkeleton,
+        espHealth = Config.espHealth,
+        espName = Config.espName,
+        espDistance = Config.espDistance,
+        espLine = Config.espLine,
+        chams = Config.chams,
+        maxDist = Config.maxDist,
+        smooth = Config.smooth,
+        streamerMode = Config.streamerMode,
+        wallCheck = Config.wallCheck -- NOVA CONFIGURAÇÃO
+    }
+    SaveConfig(configToSave)
+end
+
+-- ========== GET TARGET ==========
+local function GetTarget()
+    local best = nil
+    local bestScore = math.huge
+    
+    local myChar = LocalPlayer.Character
+    if not myChar then return nil end
+    
+    local myRoot = myChar:FindFirstChild("HumanoidRootPart")
+    if not myRoot then return nil end
+    
+    local myPos = myRoot.Position
+    local mousePos = Vector2.new(Mouse.X, Mouse.Y)
+    
+    for _, player in pairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer then
+            local char = player.Character
+            if char then
+                local hum = char:FindFirstChild("Humanoid")
+                if hum and hum.Health > 0 then
+                    local root = char:FindFirstChild("HumanoidRootPart")
+                    if root then
+                        local dist = (root.Position - myPos).Magnitude
+                        if dist <= Config.maxDist then
+                            local p = GetPart(char)
+                            if p then
+                                -- ===== WALL CHECK AQUI =====
+                                if Config.wallCheck and not IsVisible(p) then
+                                    continue -- Pula este jogador se estiver atrás de parede
+                                end
+                                
+                                local pos, onScreen = Camera:WorldToViewportPoint(p.Position)
+                                if onScreen and pos.Z > 0 then
+                                    local fromMouse = (Vector2.new(pos.X, pos.Y) - mousePos).Magnitude
+                                    if not Config.fov or fromMouse <= Config.fovSize then
+                                        local score = dist + fromMouse * 0.3
+                                        if score < bestScore then
+                                            bestScore = score
+                                            best = {part = p, pos = pos, position = p.Position, character = char}
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    
+    return best
+end
+
+-- ========== DETECTAR TIRO ==========
+UserInputService.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        isShooting = true
+        shootingHold = true
+    end
+end)
+
+UserInputService.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        shootingHold = false
+        task.wait(0.05)
+        if not shootingHold then
+            isShooting = false
+        end
+    end
+end)
+
+RunService.Heartbeat:Connect(function()
+    if shootingHold then
+        isShooting = true
+    end
+end)
+
+-- ========== KEYBINDS ==========
+UserInputService.InputBegan:Connect(function(input)
+    if input.KeyCode.Name == "LeftAlt" then
+        Config.aimbot = not Config.aimbot
+        SaveCurrentConfig()
+    end
+end)
+
+-- ========== LOOP PRINCIPAL ==========
+RunService.RenderStepped:Connect(function()
+    GetCenter()
+    
+    -- FOV
+    if Config.fov and fovCircle and not Config.streamerMode then
+        fovCircle.Visible = true
+        fovCircle.Radius = Config.fovSize
+        fovCircle.Position = screenCenter
+        local target = GetTarget()
+        fovCircle.Color = target and Color3.new(1, 0, 0) or Color3.new(0, 1, 0)
+    elseif fovCircle then
+        fovCircle.Visible = false
+    end
+    
+    local shouldAim = false
+    if Config.aimbot then
+        if Config.aimOnShoot then
+            shouldAim = isShooting or shootingHold
+        else
+            shouldAim = true
+        end
+    end
+    
+    if shouldAim then
+        local char = LocalPlayer.Character
+        if char then
+            local hum = char:FindFirstChild("Humanoid")
+            if hum and hum.Health > 0 then
+                local target = GetTarget()
+                if target and target.part and target.part.Parent then
+                    local cf = Camera.CFrame
+                    local look = (target.part.Position - cf.Position).Unit
+                    local newCF = CFrame.new(cf.Position, cf.Position + look)
+                    Camera.CFrame = cf:Lerp(newCF, Config.smooth)
+                end
+            end
+        end
+    end
+end)
+
+-- ========== STREAMER MODE TOGGLE (F1) ==========
+local function ToggleStreamerMode()
+    Config.streamerMode = not Config.streamerMode
+    SaveCurrentConfig()
+    
+    if Config.streamerMode then
+        if fovCircle then fovCircle.Visible = false end
+        
+        for _, obj in pairs(espObjects) do
+            pcall(function()
+                if obj.Visible ~= nil then
+                    obj.Visible = false
+                end
+            end)
+        end
+        
+        for _, obj in pairs(chamsList) do
+            pcall(function()
+                if obj and obj.Enabled ~= nil then
+                    obj.Enabled = false
+                end
+            end)
+        end
+        
+        pcall(function()
+            game:GetService("StarterGui"):SetCore("SendNotification", {
+                Title = "Streamer Mode",
+                Text = "ATIVADO ✓ - Tela limpa para stream",
+                Duration = 2
+            })
+        end)
+    else
+        if Config.fov and fovCircle then
+            fovCircle.Visible = true
+        end
+        
+        for _, obj in pairs(chamsList) do
+            pcall(function()
+                if obj and obj.Enabled ~= nil then
+                    obj.Enabled = true
+                end
+            end)
+        end
+        
+        pcall(function()
+            game:GetService("StarterGui"):SetCore("SendNotification", {
+                Title = "Streamer Mode",
+                Text = "DESATIVADO ✗ - ESPs visíveis",
+                Duration = 2
+            })
+        end)
+    end
+end
+
+-- Keybind para Streamer Mode (F1)
+UserInputService.InputBegan:Connect(function(input)
+    if input.KeyCode.Name == "F1" then
+        ToggleStreamerMode()
+    end
+end)
+
+-- ========== ESP ==========
+local function CreateESP(player)
+    if player == LocalPlayer or not player.Character then return end
+    
+    local char = player.Character
+    local hum = char:FindFirstChild("Humanoid")
+    if not hum then return end
+    
+    local root = char:FindFirstChild("HumanoidRootPart")
+    local head = char:FindFirstChild("Head")
+    if not root or not head then return end
+    
+    -- BOX
+    local box = Drawing.new("Square")
+    box.Thickness = 2
+    box.Filled = false
+    box.Transparency = 0.4
+    box.Color = Color3.new(1, 1, 1)
+    box.Visible = false
+    table.insert(espObjects, box)
+    
+    -- HEALTH
+    local health = Drawing.new("Square")
+    health.Thickness = 0
+    health.Filled = true
+    health.Transparency = 0.5
+    health.Visible = false
+    table.insert(espObjects, health)
+    
+    -- NAME
+    local name = Drawing.new("Text")
+    name.Size = 14
+    name.Center = true
+    name.Color = Color3.new(1, 1, 1)
+    name.Visible = false
+    name.Font = 3
+    table.insert(espObjects, name)
+    
+    -- DISTANCE
+    local dist = Drawing.new("Text")
+    dist.Size = 12
+    dist.Center = true
+    dist.Color = Color3.new(1, 1, 1)
+    dist.Visible = false
+    dist.Font = 2
+    table.insert(espObjects, dist)
+    
+    -- LINE
+    local line = Drawing.new("Line")
+    line.Thickness = 3
+    line.Color = Color3.new(1, 1, 1)
+    line.Transparency = 0.3
+    line.Visible = false
+    table.insert(espObjects, line)
+    
+    -- SKELETON
+    local skeletonLines = {}
+    local joints = {
+        {"Head", "UpperTorso"},
+        {"UpperTorso", "LowerTorso"},
+        {"UpperTorso", "LeftUpperArm"},
+        {"LeftUpperArm", "LeftLowerArm"},
+        {"UpperTorso", "RightUpperArm"},
+        {"RightUpperArm", "RightLowerArm"},
+        {"LowerTorso", "LeftUpperLeg"},
+        {"LeftUpperLeg", "LeftLowerLeg"},
+        {"LowerTorso", "RightUpperLeg"},
+        {"RightUpperLeg", "RightLowerLeg"}
+    }
+    
+    for _, joint in pairs(joints) do
+        local lineObj = Drawing.new("Line")
+        lineObj.Thickness = 3
+        lineObj.Color = Color3.new(1, 1, 1)
+        lineObj.Transparency = 0.3
+        lineObj.Visible = false
+        table.insert(espObjects, lineObj)
+        table.insert(skeletonLines, {
+            line = lineObj,
+            part1 = joint[1],
+            part2 = joint[2]
+        })
+    end
+    
+    -- UPDATE
+    local function UpdateESP()
+        if not Config.esp or not char or not char.Parent then
+            box.Visible = false
+            health.Visible = false
+            name.Visible = false
+            dist.Visible = false
+            line.Visible = false
+            for _, joint in pairs(skeletonLines) do
+                joint.line.Visible = false
+            end
+            return
+        end
+        
+        if Config.streamerMode then
+            box.Visible = false
+            health.Visible = false
+            name.Visible = false
+            dist.Visible = false
+            line.Visible = false
+            for _, joint in pairs(skeletonLines) do
+                joint.line.Visible = false
+            end
+            return
+        end
+        
+        local hp, on = Camera:WorldToViewportPoint(head.Position)
+        local rp = Camera:WorldToViewportPoint(root.Position)
+        
+        if on and hp.Z > 0 then
+            local height = math.abs(hp.Y - rp.Y) * 2.3
+            local width = height * 0.45
+            local cx = hp.X
+            local ty = hp.Y - height
+            
+            if Config.espBox then
+                box.Visible = true
+                box.Size = Vector2.new(width, height)
+                box.Position = Vector2.new(cx - width/2, ty)
+                box.Color = Color3.new(1, 1, 1)
+                box.Thickness = 2
+                box.Transparency = 0.4
+            else
+                box.Visible = false
+            end
+            
+            if Config.espHealth then
+                health.Visible = true
+                local percent = math.max(0, math.min(1, hum.Health / hum.MaxHealth))
+                local bh = height * percent
+                health.Size = Vector2.new(4, math.max(1, bh))
+                health.Position = Vector2.new(cx + width/2 + 4, ty + (height - bh))
+                health.Color = Color3.new(1 - percent, percent, 0)
+            else
+                health.Visible = false
+            end
+            
+            if Config.espName then
+                name.Visible = true
+                name.Position = Vector2.new(cx, ty - 16)
+                name.Text = player.Name
+                name.Color = Color3.new(1, 1, 1)
+            else
+                name.Visible = false
+            end
+            
+            if Config.espDistance then
+                dist.Visible = true
+                local distance = (root.Position - Camera.CFrame.Position).Magnitude / 10
+                dist.Position = Vector2.new(cx, ty + height + 14)
+                dist.Text = string.format("%.1fm", distance)
+                dist.Color = Color3.new(1, 1, 1)
+            else
+                dist.Visible = false
+            end
+            
+            if Config.espLine then
+                line.Visible = true
+                line.From = fixedPoint
+                line.To = Vector2.new(cx, ty + height)
+                line.Color = Color3.new(1, 1, 1)
+                line.Thickness = 3
+                line.Transparency = 0.3
+            else
+                line.Visible = false
+            end
+            
+            if Config.espSkeleton then
+                local bodyParts = {}
+                local partNames = {"Head", "UpperTorso", "LowerTorso", "LeftUpperArm", "LeftLowerArm", "RightUpperArm", "RightLowerArm", "LeftUpperLeg", "LeftLowerLeg", "RightUpperLeg", "RightLowerLeg"}
+                
+                for _, name in pairs(partNames) do
+                    local p = char:FindFirstChild(name)
+                    if not p then
+                        if name == "Head" then p = char:FindFirstChild("head") end
+                        if name == "UpperTorso" then p = char:FindFirstChild("Torso") or char:FindFirstChild("UpperTorso") end
+                        if name == "LowerTorso" then p = char:FindFirstChild("LowerTorso") or char:FindFirstChild("Hip") end
+                        if name == "LeftUpperArm" then p = char:FindFirstChild("LeftUpperArm") or char:FindFirstChild("LeftArm") end
+                        if name == "RightUpperArm" then p = char:FindFirstChild("RightUpperArm") or char:FindFirstChild("RightArm") end
+                        if name == "LeftLowerArm" then p = char:FindFirstChild("LeftLowerArm") or char:FindFirstChild("LeftForearm") end
+                        if name == "RightLowerArm" then p = char:FindFirstChild("RightLowerArm") or char:FindFirstChild("RightForearm") end
+                        if name == "LeftUpperLeg" then p = char:FindFirstChild("LeftUpperLeg") or char:FindFirstChild("LeftLeg") end
+                        if name == "RightUpperLeg" then p = char:FindFirstChild("RightUpperLeg") or char:FindFirstChild("RightLeg") end
+                        if name == "LeftLowerLeg" then p = char:FindFirstChild("LeftLowerLeg") or char:FindFirstChild("LeftCalf") end
+                        if name == "RightLowerLeg" then p = char:FindFirstChild("RightLowerLeg") or char:FindFirstChild("RightCalf") end
+                    end
+                    if p then
+                        bodyParts[name] = p
+                    end
+                end
+                
+                local jointMap = {
+                    {"Head", "UpperTorso"},
+                    {"UpperTorso", "LowerTorso"},
+                    {"UpperTorso", "LeftUpperArm"},
+                    {"LeftUpperArm", "LeftLowerArm"},
+                    {"UpperTorso", "RightUpperArm"},
+                    {"RightUpperArm", "RightLowerArm"},
+                    {"LowerTorso", "LeftUpperLeg"},
+                    {"LeftUpperLeg", "LeftLowerLeg"},
+                    {"LowerTorso", "RightUpperLeg"},
+                    {"RightUpperLeg", "RightLowerLeg"}
+                }
+                
+                for i, joint in pairs(jointMap) do
+                    local p1 = bodyParts[joint[1]]
+                    local p2 = bodyParts[joint[2]]
+                    
+                    if p1 and p2 then
+                        local pos1 = Camera:WorldToViewportPoint(p1.Position)
+                        local pos2 = Camera:WorldToViewportPoint(p2.Position)
+                        
+                        if pos1.Z > 0 and pos2.Z > 0 then
+                            skeletonLines[i].line.Visible = true
+                            skeletonLines[i].line.From = Vector2.new(pos1.X, pos1.Y)
+                            skeletonLines[i].line.To = Vector2.new(pos2.X, pos2.Y)
+                            skeletonLines[i].line.Color = Color3.new(1, 1, 1)
+                            skeletonLines[i].line.Thickness = 3
+                            skeletonLines[i].line.Transparency = 0.3
+                        else
+                            skeletonLines[i].line.Visible = false
+                        end
+                    else
+                        skeletonLines[i].line.Visible = false
+                    end
+                end
+            else
+                for _, joint in pairs(skeletonLines) do
+                    joint.line.Visible = false
+                end
+            end
+        else
+            box.Visible = false
+            health.Visible = false
+            name.Visible = false
+            dist.Visible = false
+            line.Visible = false
+            for _, joint in pairs(skeletonLines) do
+                joint.line.Visible = false
+            end
+        end
+    end
+    
+    local conn = RunService.RenderStepped:Connect(UpdateESP)
+    table.insert(espObjects, conn)
+end
+
+-- ========== CHAMS ==========
+local function CreateChams(player)
+    if player == LocalPlayer or not player.Character then return end
+    local char = player.Character
+    if not char:FindFirstChild("Humanoid") then return end
+    
+    local hl = Instance.new("Highlight")
+    hl.Parent = char
+    hl.FillColor = Color3.new(1, 0, 0)
+    hl.FillTransparency = 0.4
+    hl.OutlineColor = Color3.new(1, 1, 1)
+    hl.OutlineTransparency = 0.2
+    hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+    hl.Enabled = true
+    table.insert(chamsList, hl)
+end
+
+-- ========== SETUP ==========
+local function SetupPlayer(player)
+    if player == LocalPlayer then return end
+    player.CharacterAdded:Connect(function()
+        task.wait(0.3)
+        if Config.esp then CreateESP(player) end
+        if Config.chams then CreateChams(player) end
+    end)
+    if player.Character then
+        task.wait(0.3)
+        if Config.esp then CreateESP(player) end
+        if Config.chams then CreateChams(player) end
+    end
+end
+
+for _, p in pairs(Players:GetPlayers()) do SetupPlayer(p) end
+Players.PlayerAdded:Connect(SetupPlayer)
+
+-- ========== GUI ==========
+local CombatTab = Window:CreateTab("Combat")
+
+CombatTab:CreateToggle({
+    Name = "Aimbot (LeftAlt)",
+    CurrentValue = Config.aimbot,
+    Callback = function(v)
+        Config.aimbot = v
+        SaveCurrentConfig()
+    end
+})
+
+CombatTab:CreateToggle({
+    Name = "Aim Only When Shooting",
+    CurrentValue = Config.aimOnShoot,
+    Callback = function(v)
+        Config.aimOnShoot = v
+        SaveCurrentConfig()
+    end
+})
+
+CombatTab:CreateDropdown({
+    Name = "Target Part",
+    Options = {"Head", "Neck", "Chest"},
+    CurrentOption = Config.part,
+    Callback = function(o) 
+        if type(o) == "table" then 
+            Config.part = o[1] 
+        else 
+            Config.part = o 
+        end
+        SaveCurrentConfig()
+    end
+})
+
+CombatTab:CreateToggle({
+    Name = "FOV",
+    CurrentValue = Config.fov,
+    Callback = function(v)
+        Config.fov = v
+        SaveCurrentConfig()
+    end
+})
+
+CombatTab:CreateSlider({
+    Name = "FOV Size",
+    Range = {0, 360},
+    Increment = 1,
+    CurrentValue = Config.fovSize,
+    Callback = function(v)
+        Config.fovSize = v
+        SaveCurrentConfig()
+    end
+})
+
+CombatTab:CreateSlider({
+    Name = "Smoothing",
+    Range = {0.05, 1},
+    Increment = 0.05,
+    CurrentValue = Config.smooth,
+    Callback = function(v)
+        Config.smooth = v
+        SaveCurrentConfig()
+    end
+})
+
+CombatTab:CreateSlider({
+    Name = "Max Distance",
+    Range = {50, 300},
+    Increment = 10,
+    CurrentValue = Config.maxDist,
+    Callback = function(v)
+        Config.maxDist = v
+        SaveCurrentConfig()
+    end
+})
+
+-- ========== NOVA TOGGLE WALL CHECK ==========
+CombatTab:CreateToggle({
+    Name = "Wall Check (Ignorar atrás de paredes)",
+    CurrentValue = Config.wallCheck,
+    Callback = function(v)
+        Config.wallCheck = v
+        SaveCurrentConfig()
+    end
+})
+
+-- ========== ESP TAB ==========
+local ESPTab = Window:CreateTab("ESP")
+
+ESPTab:CreateToggle({
+    Name = "ESP Master",
+    CurrentValue = Config.esp,
+    Callback = function(v)
+        Config.esp = v
+        if v then
+            Config.espBox = true
+            Config.espSkeleton = true
+            Config.espHealth = true
+            Config.espName = true
+            Config.espDistance = true
+            Config.espLine = true
+            for _, p in pairs(Players:GetPlayers()) do
+                if p ~= LocalPlayer then CreateESP(p) end
+            end
+        else
+            Config.espBox = false
+            Config.espSkeleton = false
+            Config.espHealth = false
+            Config.espName = false
+            Config.espDistance = false
+            Config.espLine = false
+            ClearESP()
+        end
+        SaveCurrentConfig()
+    end
+})
+
+ESPTab:CreateToggle({
+    Name = "ESP Box (Branca)",
+    CurrentValue = Config.espBox,
+    Callback = function(v) 
+        Config.espBox = v
+        if v then Config.esp = true end
+        for _, p in pairs(Players:GetPlayers()) do
+            if p ~= LocalPlayer then CreateESP(p) end
+        end
+        SaveCurrentConfig()
+    end
+})
+
+ESPTab:CreateToggle({
+    Name = "ESP Skeleton",
+    CurrentValue = Config.espSkeleton,
+    Callback = function(v) 
+        Config.espSkeleton = v
+        if v then Config.esp = true end
+        for _, p in pairs(Players:GetPlayers()) do
+            if p ~= LocalPlayer then CreateESP(p) end
+        end
+        SaveCurrentConfig()
+    end
+})
+
+ESPTab:CreateToggle({
+    Name = "ESP Health Bar",
+    CurrentValue = Config.espHealth,
+    Callback = function(v) 
+        Config.espHealth = v
+        if v then Config.esp = true end
+        for _, p in pairs(Players:GetPlayers()) do
+            if p ~= LocalPlayer then CreateESP(p) end
+        end
+        SaveCurrentConfig()
+    end
+})
+
+ESPTab:CreateToggle({
+    Name = "ESP Name",
+    CurrentValue = Config.espName,
+    Callback = function(v) 
+        Config.espName = v
+        if v then Config.esp = true end
+        for _, p in pairs(Players:GetPlayers()) do
+            if p ~= LocalPlayer then CreateESP(p) end
+        end
+        SaveCurrentConfig()
+    end
+})
+
+ESPTab:CreateToggle({
+    Name = "ESP Distance",
+    CurrentValue = Config.espDistance,
+    Callback = function(v) 
+        Config.espDistance = v
+        if v then Config.esp = true end
+        for _, p in pairs(Players:GetPlayers()) do
+            if p ~= LocalPlayer then CreateESP(p) end
+        end
+        SaveCurrentConfig()
+    end
+})
+
+ESPTab:CreateToggle({
+    Name = "ESP Line (Radar)",
+    CurrentValue = Config.espLine,
+    Callback = function(v) 
+        Config.espLine = v
+        if v then Config.esp = true end
+        for _, p in pairs(Players:GetPlayers()) do
+            if p ~= LocalPlayer then CreateESP(p) end
+        end
+        SaveCurrentConfig()
+    end
+})
+
+ESPTab:CreateToggle({
+    Name = "Chams (Glow)",
+    CurrentValue = Config.chams,
+    Callback = function(v)
+        Config.chams = v
+        if v then
+            for _, p in pairs(Players:GetPlayers()) do
+                if p ~= LocalPlayer then CreateChams(p) end
+            end
+        else
+            ClearChams()
+        end
+        SaveCurrentConfig()
+    end
+})
+
+-- ========== SETTINGS TAB ==========
+local SettingsTab = Window:CreateTab("Settings")
+
+SettingsTab:CreateToggle({
+    Name = "Streamer Mode (F1)",
+    CurrentValue = Config.streamerMode,
+    Callback = function(v)
+        if Config.streamerMode ~= v then
+            ToggleStreamerMode()
+        end
+    end
+})
+
+SettingsTab:CreateButton({
+    Name = "Toggle Streamer Mode (F1)",
+    Callback = function()
+        ToggleStreamerMode()
+    end
+})
+
+SettingsTab:CreateButton({
+    Name = "Reset All Settings",
+    Callback = function()
+        Config = defaultConfig
+        SaveConfig(Config)
+        pcall(function()
+            game:GetService("StarterGui"):SetCore("SendNotification", {
+                Title = "Batata Hub",
+                Text = "Configurações resetadas! Recarregue o script.",
+                Duration = 3
+            })
+        end)
+    end
+})
+
+-- ========== LIMPEZA ==========
+LocalPlayer.OnTeleport:Connect(function()
+    ClearESP()
+    ClearChams()
+    if fovCircle then pcall(fovCircle.Remove, fovCircle) end
+end)
+
+print("Batata Hub carregado!")
+print("LeftAlt = Aimbot")
+print("F1 = Streamer Mode")
+print("Configurações salvas automaticamente!")
